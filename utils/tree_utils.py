@@ -109,3 +109,39 @@ def create_conversation_list(df, idx):
         set_k.append(pair[1])
         conversations.append(pair)
     return conversations
+
+
+def clamp_and_slice_ids(root_path, max_width, max_depth):
+    """
+        child_rel -> [0, 1, ..., max_width)
+        ids \in [0, max_width - 1) do not change,
+        ids >= max_width-1 are grouped into max_width-1
+        apply this function in Node.extract_data(..., f=)
+    """
+    if max_width != -1:
+        root_path = [min(ch_id, max_width - 1) for ch_id in root_path]
+    if max_depth != -1:
+        root_path = root_path[-max_depth:]
+    return root_path
+
+
+def generate_positions(root_paths, max_width, max_depth):
+    """
+    root_paths: List([ch_ids]), ch_ids \in [0, 1, ..., max_width)
+    returns: Tensor [len(root_paths), max_width * max_depth]
+    """
+    for i, path in enumerate(root_paths):
+        # stack-like traverse
+        if len(root_paths[i]) > max_depth:
+            root_paths[i] = root_paths[i][-max_depth:]
+        root_paths[i] = [min(ch_id, max_width - 1) for ch_id in root_paths[i]]
+        # pad
+        root_paths[i] = root_paths[i][::-1] + [max_width] * (max_depth - len(root_paths[i]))
+    root_path_tensor = torch.LongTensor(root_paths)
+    onehots = torch.zeros((max_width + 1, max_width))
+    onehots[:-1, :] = torch.eye(max_width)
+    embeddings = torch.index_select(onehots, dim=0, index=root_path_tensor.view(-1))
+    embeddings = embeddings.view(root_path_tensor.shape + (embeddings.shape[-1],))
+    embeddings = embeddings.view((root_path_tensor.shape[0], -1))
+    return embeddings
+
