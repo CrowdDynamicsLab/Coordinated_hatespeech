@@ -13,7 +13,7 @@ class TreeNode:
         self.name = name
         self.children = []  # List of TreeNode objects
         self.level = 0  # Level of the node in the tree
-        self.sibling_order = None  # Order among siblings
+        self.sibling_order = 0  # Order among siblings
         self.parent = None  # Parent of the node
         self.local_relation = dict()
 
@@ -82,7 +82,7 @@ def get_node_info(tree_root):
         node_info[node.name] = {
             'level': node.level,
             'number_of_siblings': node.num_siblings(),
-            'sibling_order': node.sibling_order if node.sibling_order is not None else 0,
+            'sibling_order': node.sibling_order,
         }
         for child in node.children:
             traverse(child)
