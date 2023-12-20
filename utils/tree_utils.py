@@ -16,6 +16,7 @@ class TreeNode:
         self.sibling_order = 0  # Order among siblings
         self.parent = None  # Parent of the node
         self.local_relation = dict()
+        self.global_relation = dict()
 
     def add_child(self, child_node):
         child_node.parent = self
@@ -30,7 +31,7 @@ class TreeNode:
         ret = []
         for node in node_list:
             if not (only_leaf and node.node_type == "type"):
-                ret.append(f(node))
+                ret.append({node.name: f(node)})
         return ret
 
     def create_local_relation(self):
@@ -45,6 +46,22 @@ class TreeNode:
                 _dfs(child)
 
         _dfs(self)
+
+    def create_global_relation(self):
+        def g_dfs(node):
+            node_rel = [node.level, node.num_siblings(), node.sibling_order]
+            if not node.parent:
+                node.global_relation[node.name] = [node_rel]
+            else: 
+                if node.parent.name not in node.parent.global_relation.keys():
+                    node.global_relation[node.name] = node.parent.parent.global_relation[node.parent.parent.name] + [node_rel]
+                else:
+                    node.global_relation[node.name] = node.parent.global_relation[node.parent.name] + [node_rel]
+            for child in node.children:
+                g_dfs(child)
+
+        g_dfs(self)
+ 
 
     def dfs(self):
         ret = []
@@ -134,9 +151,7 @@ def generate_positions(root_paths, max_width, max_depth):
         # stack-like traverse
         if len(root_paths[i]) > max_depth:
             root_paths[i] = root_paths[i][-max_depth:]
-        root_paths[i] = [min(ch_id, max_width - 1) for ch_id in root_paths[i]]
-        # pad
-        root_paths[i] = root_paths[i][::-1] + [max_width] * (max_depth - len(root_paths[i]))
+        root_paths[i] = root_paths[i][::-1] + [[max_depth, max_width, max_width]] * (max_depth - len(root_paths[i]))
     root_path_tensor = torch.LongTensor(root_paths)
     onehots = torch.zeros((max_width + 1, max_width))
     onehots[:-1, :] = torch.eye(max_width)

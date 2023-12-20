@@ -6,6 +6,86 @@ import math
 import copy
 
 # needs modify
+class RelativeAttention(Attention):
+    def __init__(
+            self, nx, n_ctx, n_head, scale=False, dropout=None, additive=False,
+            use_tree=False, use_seq=False, rel_vocab_size=None, use_global=True, use_local=True, args=None
+    ):
+        super(RelativeAttention, self).__init__(nx, n_ctx, n_head, scale, dropout)
+        self.additive = additive
+        self.use_seq = use_seq
+        self.use_tree = use_tree
+
+        self.use_global = use_global
+        self.use_local = use_local
+
+        self.rel_weights = nn.Embedding(rel_vocab_size, n_head)
+
+ 
+
+
+    def matmul_with_relative_representations(self, q, rel, transpose_rel=False):
+        # sequential relative attention helper function
+        # yian: Masked matrix?
+        # q: [b, h, n, dh] -> [n, b, h, dh] -> [n, b*h, dh] : batch, head, seq, q_feature
+        # rel: [n, n, dh] -> [n, dh, n] 
+        # return: [b, h, n, n]
+        nb, nh, nt, _ = q.size()
+        q = q.permute(2, 0, 1, 3).contiguous()
+        q = q.reshape(q.size(0), nb * nh, q.size(-1))
+        if not transpose_rel:
+            rel = rel.permute(0, 2, 1)
+        x = torch.matmul(q, rel)
+        x = x.reshape(nt, nb, nh, -1)
+        x = x.permute(1, 2, 0, 3).contiguous()
+        return x
+
+    def _attn(self, q, k, v, tds=None, lr=None):
+        # (batch, head, seq_length, head_features)
+        # q = xW^Q
+        # k = xW^K
+        w = torch.matmul(q, k) # alpha_ij
+        nd, ns = w.size(-2), w.size(-1)
+
+        if self.use_global:
+            B = torch.matmul(tds.unsqueeze(3), tds.unsqueeze(2).transpose(-1, -2))
+            w = w + B
+
+        if self.scale:
+            w = w / math.sqrt(v.size(-1))
+
+        
+        r = self.rel_matrix(lr)
+        if self.use_local:
+            first_term = torch.matmul(q.unsqueeze(3), r.transpose(-1, -2))
+            second_term = torch.matmul(r, k.unsqueeze(2).transpose(-1, -2))
+            Y = first_term + second_term
+            w = w + Y
+
+
+        w_normed = nn.Softmax(dim=-1)(w)  # calc attention scores
+        if self.dropout is not None:
+            w_normed = self.dropout(w_normed)
+
+        ret = torch.matmul(w_normed, v)
+
+        return ret
+
+    def self_attention(self, query, key, value, rel, tds, lr):
+        a = self._attn(query, key, value, rel, tds, lr)
+        a = self.merge_heads(a)
+        a = self.c_proj(a)
+        return a
+
+    def forward(self, x, rel=None, tds=None, lr=None):
+        query, key, value = self.get_q_k_v(x)
+        if self.use_tree:
+            rel = self.rel_weights(rel)
+            rel = rel.permute(0, 3, 1, 2)
+        return self.self_attention(query, key, value, rel, tds, lr)
+
+
+
 class MultiHeadAttention(nn.Module):
     def __init__(self, d_model, num_heads):
         super(MultiHeadAttention, self).__init__()

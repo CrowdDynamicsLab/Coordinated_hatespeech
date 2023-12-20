@@ -12,20 +12,22 @@ import sys
 
 sys.setrecursionlimit(10000)
 
-import sys
+import pandas as pd
 
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), os.pardir))
-from utils.utils import separate_dps, file_tqdm, separate_lrs
-from utils.tree_utils import Node, clamp_and_slice_ids
+from ..utils.utils import separate_dps, file_tqdm, separate_lrs
+from ..utils.tree_utils import *
+from ..dataset import *
 
 logging.basicConfig(level=logging.INFO)
 
 
 def main():
     parser = argparse.ArgumentParser(description="Generate datapoints from AST")
-    parser.add_argument("--data_dir", "-a", help="filepath with the ASTs to be parsed")
+    parser.add_argument("--data_dir", "-o", default="../../data", help="filepath with the ASTs to be parsed")
+    parser.add_argument("--journalist", type=str, default="aliceysu", help="filepath with the ASTs to be parsed")
     parser.add_argument(
-        "--out_fp", "-o", default="/tmp/paths.txt", help="filepath for the output dps"
+        "--out_dir", "-o", default="../../result/", help="filepath for the output dps"
     )
     parser.add_argument(
         "--n_ctx", "-c", type=int, default=1000, help="max context length for each dp"
@@ -34,10 +36,7 @@ def main():
         "--max_width", type=int, default=16, help="max number of child ids"
     )
     parser.add_argument(
-        "--max_depth", type=int, default=8, help="max depth of the leaf to root path"
-    )
-    parser.add_argument(
-        "--mode", default="all", choices=["all", "values"], help="types and values | only values",
+        "--max_depth", type=int, default=10, help="max depth of the leaf to root path"
     )
 
     # HERE
@@ -49,27 +48,35 @@ def main():
         os.remove(args.out_fp)
     logging.info("Number of context: {}".format(args.n_ctx))
 
+    num_dps = 0
+    data = pkl.load(open(os.path.join(args.data_dir, f'{args.journalist}_dict.pkl'), 'rb'))
+    num_classes = 3
+    num_sequences = len(set(data['conversation_id']))
+    journal = pd.DataFrame.from_dict(data)
+    journal_sort = journal.sort_values(by=['created_at'])
+
+    journal_batch = journal_sort[["type", "possibly_sensitive", "lang", "reply_settings",
+                                "retweet_count", "reply_count", "like_count", "quote_count", "impression_count",
+                                "mentions", "urls", "labels"]]
+    ids = list(set(journal['conversation_id']))
+    id_pair = {}
+    for idx in ids:
+        id_pair[idx] = create_conversation_list(journal_sort[journal_sort['conversation_id']==idx], idx)
+
     if args.local_relation:
         print("Save Relation between Child and Father")
-        num_dps = 0
-        with open(args.ast_fp, "r") as f, open(args.out_fp, "w") as fout:
-            for line in file_tqdm(f,True):
-                dp = json.loads(line.strip())
-                if len(dp) <= 1:
-                    continue
-                try:
-                    root = Node.build_tree(dp)
-                except RecursionError:
-                    print(line)
-                    exit(1)
-                root.create_local_relation()
-                node_list = root.dfs()
-                local_relations = Node.extract_data(node_list,
-                                                    f=lambda node: node.local_relation)
-
+        with open(os.path.join(args.out_fp, f'{args.journalist}_local_path.txt'), "w") as fout:
+            for k in id_pair.keys():
+                tree_root = build_tree(id_pair[k])
+                
+                tree_root.create_local_relation()
+                node_list = tree_root.dfs()
+                local_relations = TreeNode.extract_data(node_list,f=lambda node: node.local_relation)
                 lrs = separate_lrs(local_relations, args.n_ctx)
 
                 for lr, extended in lrs:
+                    if extended != 0:
+                        break
                     if len(lr) - extended > 1:
                         json.dump(lr, fp=fout)  # each line is the json of a list [dict,dict,...]
                         num_dps += 1
@@ -80,53 +87,26 @@ def main():
             print("Save Child Paths and Father Paths")
 
         num_dps = 0
-        with open(args.ast_fp, "r") as f, open(args.out_fp, "w") as fout:
-            for line in file_tqdm(f,True):
-                dp = json.loads(line.strip())
-                if len(dp) <= 1:
-                    continue
-                try:
-                    root = Node.build_tree(dp)
-                except RecursionError:
-                    print(line)
-                    exit(1)
-                node_list = root.dfs()
-                # f=lambda node: clamp_and_slice_ids(
-                #     node.child_rel, max_width=args.max_width, max_depth=args.max_depth
-                # )
-                root_paths = Node.extract_data(
-                    node_list,
-                    f=lambda node: clamp_and_slice_ids(
-                        node.child_rel, max_width=-1, max_depth=-1
-                    )
-                )
+        with open(os.path.join(args.out_fp, f'{args.journalist}_global_path.txt'), "w") as fout:
+            for k in id_pair.keys():
+                tree_root = build_tree(id_pair[k])
+                
+                tree_root.create_global_relation()
+                node_list = tree_root.dfs()
+                
+                root_paths = TreeNode.extract_data(node_list,f=lambda node: clamp_and_slice_ids(
+                        node.global_relation, max_width=-1, max_depth=-1))
                 asts = separate_dps(root_paths, args.n_ctx)
-                if args.td:
-                    father_paths = Node.extract_data(
-                        node_list,
-                        f=lambda node: clamp_and_slice_ids(
-                            node.father_rel, max_width=-1, max_depth=-1
-                        )
-                    )
-                    assert len(father_paths) == len(root_paths)
-                    father_asts = separate_dps(father_paths, args.n_ctx)
-                if args.td:
-                    for child, father in zip(asts, father_asts):
-                        child_ast, extended = child
-                        father_ast, _ = father
-                        if len(child_ast) - extended > 1:
-                            json.dump([child_ast, father_ast],
-                                      fp=fout)  # each line is the json of a list [[[1],[1,2,3,4]],[[1],[1,2,3,4]]]
-                            # list[0] = childs = [[],[1],[1,2],[1,2,3]]
-                            # list[1] = fathers = [[],[1],[1,2],[1,2,3]]
-                            num_dps += 1
-                            fout.write("\n")
-                else:
-                    for ast, extended in asts:
-                        if len(ast) - extended > 1:
-                            json.dump(ast, fp=fout)
-                            num_dps += 1
-                            fout.write("\n")
+
+                for lr, extended in asts:
+                    if extended != 0:
+                        break
+                    if len(lr) - extended > 1:
+                        json.dump(lr, fp=fout)  # each line is the json of a list [dict,dict,...]
+                        num_dps += 1
+                        fout.write("\n")
+
+
         logging.info("Wrote {} data points to: {}".format(num_dps, args.out_fp))
 
 
