@@ -66,34 +66,21 @@ class TreeDataset(torch.utils.data.Dataset):
         delta_times: Inter-arrival times between events. List of variable length sequences.
 
     """
-    def __init__(self, journalist):    
-        self.conversatin_id=journalist['conversation_id']
-        self.user_id=journalist['user_id']
-        self.reference_id=journalist['reference_id']
-        self.tweet_id=journalist['tweet_id']
-        self.type=journalist['type']
-        self.sens=journalist['possibly_sensitive']
-        self.lang=journalist['lang']
-        self.reply=journalist['reply_settings'] 
-        self.created_at=journalist['created_at'] 
-        self.retweet_count=journalist['retweet_count']
-        self.like_count=journalist['like_count']
-        self.quote_count=journalist['quote_count']
-        self.impression_count=journalist['impression_count'] 
-        self.mentions=journalist['mentions']
-        self.urls=journalist['urls']
-        self.labels=journalist['labels'] 
+    def __init__(self, journalist, prob, global_path, local_path):  
+        self.id = journalist[['tweet_id']].to_numpy()
+        self.user = journalist[['user_id']].to_numpy()
+        self.feature = journalist[['type', 'possibly_sensitive', 'lang', 'reply_settings', 
+                                   'retweet_count', 'reply_count', 'like_count', 'quote_count',
+                                    'impression_count', 'mentions', 'urls']].to_numpy()
 
-        """if delta_times is not None:
-            self.in_times = [torch.Tensor(t[:-1]) for t in delta_times]
-            self.out_times = [torch.Tensor(t[1:]) for t in delta_times]"""
+        self.label = journalist[['labels']].to_numpy()
+        self.prob = prob
+        self.global_path = global_path
+        self.local_path = local_path
 
     def __getitem__(self, key):
-        return self.conversatin_id[key], self.reference_id[key], \
-                self.tweet_id[key], self.type[key], self.sens[key], self.lang[key], \
-                self.reply[key], self.created_at[key], self.retweet_count[key], self.like_count[key], \
-                self.quote_count[key], self.impression_count[key], self.mentions[key], self.urls[key], self.labels[key]
-
+        return self.feature[key], self.label[key], \
+                self.prob[key], self.global_path[key], self.local_path[key]
     def __len__(self):
         return len(self.labels)
 
@@ -148,5 +135,6 @@ class Dataset(torch.utils.data.Dataset):
                 #"labels": torch.tensor(target_labels)
             },
             "positions": pos,
-            "rel": rel
+            "rel": rel,
+            "prob": prob
         }

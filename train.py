@@ -32,7 +32,10 @@ def load_data(args):
     
     split = [64, 128]
     val = 0
-    data = pkl.load(open(os.path.join(args.data_dir, f'{args.journalist}_dict.pkl'), 'rb'))
+    data = pd.read_csv((os.path.join(args.data_dir, f'{args.journalist}_context.csv')))
+    prob = pkl.load(open(os.path.join(args.data_dir, f'{args.journalist}_edgeprob.pkl'), 'rb'))
+    global_path = 
+    local_path = 
     logging.info(f'loaded split {args.journalist}...')
     # data - dict: dim_process, devtest, args, train, dev, test, index (train/dev/test given as)
     # data[split] - list dicts {'time_since_start': at, 'time_since_last_event': dt, 'type_event': mark} or
@@ -43,19 +46,10 @@ def load_data(args):
     #num_sequences += len(data[split]['arrival_times'])
     num_sequences = len(set(data['conversation_id']))
     journal = pd.DataFrame.from_dict(data)
-    """input_x = []
-    input_y = []
-    for index, row in journal.iterrows():
-        input_x.append([row['tweet_id'], row['type'], row['possibly_sensitive'], row['lang'], row['reply_settings'], 
-                        row['retweet_count']+row['reply_count']+row['like_count']+row['quote_count']+ row['impression_count'], 
-                        row['mentions'], row['urls']])
-        input_y.append(row['labels'])
-
-    X = torch.tensor(input_x).to(torch.int64)
-    y = torch.tensor(input_y).to(torch.int64)
-    X_train, X_dev, X_test = X[:split[0]], X[split[0]:split[1]], X[split[1]:]
-    y_train, y_dev, y_test = y[:split[0]], y[split[0]:split[1]], y[split[1]:]"""
+    
     X_train, X_dev, X_test = journal.iloc[:split[0]], journal.iloc[split[0]:split[1]], journal.iloc[split[1]:]
+    prob_train, prob_dev, prob_test = prob[:]
+    
     d_train = TreeDataset(X_train)
     d_val = TreeDataset(X_dev)  
     d_test  = TreeDataset(X_test)   
@@ -111,4 +105,29 @@ if __name__=='__main__':
     dl_train, dl_val, dl_test, mean_out_train, std_out_train, num_classes, num_sequences = load_data(args)
     print("TRAIN", dl_train)
     logging.info('loaded the dataset and formed torch dataloaders.')
+
+    
+    # model, opt = create_model(num_classes, num_sequences, args, mean_out_train, std_out_train)
+    # logging.info('model created from config hyperparameters.')
+    # gmm = GaussianLaplaceTiedMixture(args.gmm_k, 0, args.mark_embedding_size, device = args.device)
+    
+    # gmm.to(args.device)
+    # train(model, opt, dl_train, dl_val, logging, args.use_marks, args.max_epochs, args.patience, 
+    #       args.display_step, args.save_freq, args.out_dir, args.device, args, gmm = gmm)
+
+    # def evaluate(model, dl_list, dl_names, use_marks, device):
+    #     # Calculate the train/val/test loss, plot training curve
+    #     model.eval()
+    #     for dl_, name in zip(dl_list, dl_names):
+    #         loss_tot, time_nll, marks_nll, marks_acc = get_total_loss(
+    #                 dl_, model, args.use_marks, device)
+    #         logging.info(f'{name}: {loss_tot:.4f}')
+    #         logging.info(f'TimeNLL:{time_nll:.4f} MarksNLL:{marks_nll:.4f} Acc:{marks_acc:.4f}')
+    # dl_list = [dl_train, dl_val, dl_test]
+    # dl_names = ['Train', 'Val', 'Test']
+    # evaluate(model, dl_list, dl_names, args.use_marks, args.device)
+    # # model = torch.load(out_dir + 'best_full_model.pt')
+    
+    # extract_features(model, logging, args, gmm)
+    # logging.info('Finished program.')
     
