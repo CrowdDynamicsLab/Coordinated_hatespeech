@@ -125,7 +125,7 @@ def create_conversation_list(df, idx):
         set_k.append(pair[0])
         set_k.append(pair[1])
         conversations.append(pair)
-    return conversations
+    return conversations, list(set(set_k)- set([idx])) 
 
 
 def clamp_and_slice_ids(root_path, max_width, max_depth):

@@ -15,13 +15,16 @@ import argparse
 import sys
 import pickle as pkl
 import sklearn
+from tqdm import tqdm
+import json
 
 from sklearn.mixture import GaussianMixture
 from collections import Counter
 from sklearn.cluster import KMeans
 from datetime import datetime
-# %load_ext autoreload
-# %autoreload 2
+
+from utils.utils import *
+from utils.tree_utils import *
 
 
 def load_data(args):
@@ -29,13 +32,29 @@ def load_data(args):
     num_classes, num_sequences = 0, 0
     seq_dataset = []
     arr = []
+    dp = []
+    rel = []
     
     split = [64, 128]
     val = 0
-    data = pd.read_csv((os.path.join(args.data_dir, f'{args.journalist}_context.csv')))
+    journal_sort = pd.read_csv((os.path.join(args.data_dir, f'{args.journalist}_context.csv')))
+    ids = list(set(journal_sort['conversation_id']))
+    id_pair = {}
+    id_conv = {}
+    for idx in ids:
+        id_pair[idx], id_conv[idx] = create_conversation_list(journal_sort[journal_sort['conversation_id']==idx], idx)
     prob = pkl.load(open(os.path.join(args.data_dir, f'{args.journalist}_edgeprob.pkl'), 'rb'))
-    global_path = 
-    local_path = 
+    
+    with open(os.path.join(args.out_fp, f'{args.journalist}_global_path.txt'), "r") as f:
+        for line in tqdm(f, total=get_number_of_lines(f)):
+            dp.append(json.loads(line.strip()))
+
+    with open(os.path.join(args.out_fp, f'{args.journalist}_local_path.txt'), "r") as f:
+        for line in tqdm(f, total=get_number_of_lines(f)):
+            rel.append(json.loads(line.strip()))
+    
+    global_data = convert_global(dp, id_data)
+    local_data = convert_local(rel)
     logging.info(f'loaded split {args.journalist}...')
     # data - dict: dim_process, devtest, args, train, dev, test, index (train/dev/test given as)
     # data[split] - list dicts {'time_since_start': at, 'time_since_last_event': dt, 'type_event': mark} or
@@ -44,10 +63,9 @@ def load_data(args):
     # num_sequences: number of conversations of a journalist
     num_classes = args.classes
     #num_sequences += len(data[split]['arrival_times'])
-    num_sequences = len(set(data['conversation_id']))
-    journal = pd.DataFrame.from_dict(data)
+    num_sequences = len(set(journal_sort['conversation_id']))
     
-    X_train, X_dev, X_test = journal.iloc[:split[0]], journal.iloc[split[0]:split[1]], journal.iloc[split[1]:]
+    X_train, X_dev, X_test = journal_sort.iloc[:split[0]], journal_sort.iloc[split[0]:split[1]], journal_sort.iloc[split[1]:]
     prob_train, prob_dev, prob_test = prob[:]
     
     d_train = TreeDataset(X_train)

@@ -12,11 +12,94 @@ import sys
 import random
 import numpy as np
 import re
+import ast
 
 from collections import OrderedDict
 from time import gmtime, strftime
 
 #from . import constants
+
+def convert_path(g_list):
+    g_dict = {}
+    for item in g_list:
+        temp = ast.literal_eval(item)
+        for item in temp:
+            k = list(item.keys())[0]
+            g_dict[k] = item[k][k]
+    return g_dict
+
+def convert_global(root_paths, id_data):
+    roots = []
+    global_new = []
+    for i in range(len(root_paths)):
+        new_dict = {}
+        for item in root_paths[i]:
+            name = list(item.keys())[0]
+            new_dict[name] = np.array(list(list(item.values())[0].values())).squeeze().tolist()
+        roots.append(new_dict)
+    for i in range(len(id_data)):
+        global_new.append([roots[i][str(k)] for k in id_data[i]])
+    return global_new
+
+def convert_local(local_rel):
+    rel = []
+    for i in range(len(local_rel)):
+        new_dict = {}
+        for item in local_rel[i]:
+            name = list(item.keys())[0]
+            new_dict[name] = item[name]
+        rel.append(new_dict)
+    return rel
+
+def create_data(journal_sort, ids):
+    batch_data = []
+    target_data = []
+    conv_data = []
+    ref_data = []
+    id_data = []
+    for idx in ids:
+        convs = journal_sort[journal_sort['conversation_id'] == idx]
+        convs_batch = convs[["type", "possibly_sensitive", "lang", "reply_settings",
+                        "retweet_count", "reply_count", "like_count", "quote_count", "impression_count",
+                        "mentions", "urls"]]
+        conv_data.append(list(convs['conversation_id']))
+        ref_data.append(list(convs['reference_id']))
+        id_data.append(list(convs['tweet_id']))
+        batch_data.append(convs_batch.values.tolist())
+        target_data.append(list(convs['labels']))
+    
+    label_data = target_data
+    return id_data
+
+def indexing(ls):
+    dic = {}
+    for i in range(len(ls)):
+        dic[ls[i]] = i
+        i += 1
+    return dic
+
+def generate_local_mat(local, idx):
+    mat = []
+    for ids, item in enumerate(local):
+        temp = []
+        ind = indexing(idx[ids])
+        for i in idx[ids]:
+            if str(i) not in list(local[ids].keys()):
+                continue
+            for k in list(local[ids][str(i)].keys()):
+                if k == list(local[ids].keys())[0]:
+                    temp_l = local[ids][str(i)][k]
+                    temp_ind = ind[i]
+                    temp.append([temp_ind, temp_ind, temp_l[temp_l[2]]])
+                elif int(k) not in idx[ids]:
+                    continue
+                else:
+                    temp_l = local[ids][str(i)][k]
+                    temp_ind1 = ind[i]
+                    temp_ind2 = ind[int(k)]
+                    temp.append([temp_ind1, temp_ind2, temp_l[temp_l[2]]])
+        mat.append(temp)
+    return mat
 
 
 def line_positions(file_path):
