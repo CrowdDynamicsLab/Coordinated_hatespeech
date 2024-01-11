@@ -5,56 +5,24 @@ import pickle as pkl
 from pathlib import Path
 from sklearn.model_selection import train_test_split
 
-class Batch():
-    def __init__(self, conv_id, ref_id, tweet_id, type, sens, lang, reply, retweet_count, like_count, quote_count, 
-                 impression_count, mentions, urls, labels, length):
-        self.conv_id=conv_id
-        self.ref_id=ref_id
-        self.tweet_id=tweet_id
-        self.type=type
-        self.sens=sens
-        self.lang=lang
-        self.reply=reply
-        self.retweet_count=retweet_count
-        self.like_count=like_count
-        self.quote_count=quote_count
-        self.impression_count=impression_count
-        self.mentions=mentions
-        self.urls=urls
-        self.labels=labels
-        self.length=length
-
 def collate(batch):
-    conv_id = torch.tensor([item[0] for item in batch]).to(torch.int64)
-    ref_id = torch.tensor([item[1] for item in batch]).to(torch.int64)
-    tweet_id = torch.tensor([item[2] for item in batch]).to(torch.int64)
-    type = torch.tensor([item[3] for item in batch]).to(torch.int64)
-    sens = torch.tensor([item[4] for item in batch]).to(torch.int64)
-    lang = torch.tensor([item[5] for item in batch]).to(torch.int64)
-    reply = torch.tensor([item[6] for item in batch]).to(torch.int64)
-    #created_at = torch.tensor([item[7] for item in batch])
-    retweet_count = torch.tensor([item[8] for item in batch]).to(torch.int64)
-    like_count = torch.tensor([item[9] for item in batch]).to(torch.int64)
-    quote_count = torch.tensor([item[10] for item in batch]).to(torch.int64)
-    impression_count = torch.tensor([item[11] for item in batch]).to(torch.int64)
-    mentions = torch.tensor([item[12] for item in batch]).to(torch.int64)
-    urls = torch.tensor([item[13] for item in batch]).to(torch.int64)
-    labels = torch.tensor([item[14] for item in batch]).to(torch.int64)
-    length = torch.Tensor([len(item) for item in batch]).to(torch.int64)
-    
+
+    data= torch.tensor([item[0] for item in batch]).to(torch.int64)
+    labels = torch.tensor([item[1] for item in batch]).to(torch.int64)
+    prob = torch.tensor([item[2] for item in batch]).to(torch.int64)
+    global_path = torch.tensor([item[3] for item in batch]).to(torch.int64)
+    local_path = torch.tensor([item[4] for item in batch]).to(torch.int64)
     #out_tweet_type = torch.nn.utils.rnn.pad_sequence(out_tweet_types, batch_first=True)
     #print("start")
     #return Batch(in_time, out_time, length, in_mark=in_mark, out_mark=out_mark, in_tweet_type=in_tweet_type, out_tweet_type=out_tweet_type, index=index)
     #return Batch(conv_id, ref_id, tweet_id, type, sens, lang, reply, retweet_count, like_count, quote_count, 
     #             impression_count, mentions, urls, labels, length)
     return {
-            "ids": {
-                "conv_id": conv_id,
-                "ref_id": ref_id, 
-                "tweet_id": tweet_id
-            },
-            "features": features,
-            "positions": positions,
+            "labels": labels,
+            "data": data,
+            "prob": prob,
+            "glb": global_path,
+            "rel": local_path,
             "labels": labels
         }
     
@@ -66,20 +34,15 @@ class TreeDataset(torch.utils.data.Dataset):
         delta_times: Inter-arrival times between events. List of variable length sequences.
 
     """
-    def __init__(self, journalist, prob, global_path, local_path):  
-        self.id = journalist[['tweet_id']].to_numpy()
-        self.user = journalist[['user_id']].to_numpy()
-        self.feature = journalist[['type', 'possibly_sensitive', 'lang', 'reply_settings', 
-                                   'retweet_count', 'reply_count', 'like_count', 'quote_count',
-                                    'impression_count', 'mentions', 'urls']].to_numpy()
-
-        self.label = journalist[['labels']].to_numpy()
+    def __init__(self, data, prob, global_path, local_path, label):  
+        self.data = data
         self.prob = prob
         self.global_path = global_path
         self.local_path = local_path
+        self.labels = label
 
     def __getitem__(self, key):
-        return self.feature[key], self.label[key], \
+        return self.data[key], self.labels[key], \
                 self.prob[key], self.global_path[key], self.local_path[key]
     def __len__(self):
         return len(self.labels)

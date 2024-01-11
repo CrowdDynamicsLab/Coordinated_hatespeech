@@ -16,8 +16,24 @@ import ast
 
 from collections import OrderedDict
 from time import gmtime, strftime
+from scipy.sparse import csr_matrix 
 
 #from . import constants
+
+def pad_sequences(sequences, pad_token=0):
+    # Determine the maximum sequence length
+    max_length = max(len(seq) for seq in sequences)
+
+    # Pad each sequence to the maximum length
+    padded_sequences = np.array([np.pad(seq, ((0, max_length - len(seq)), (0, 0)), 
+                                        mode='constant', constant_values=pad_token) 
+                                 for seq in sequences])
+
+    # Create attention masks
+    attention_masks = np.array([[1 if token.any() else 0 for token in seq] 
+                                for seq in padded_sequences])
+    
+    return padded_sequences, attention_masks
 
 def convert_path(g_list):
     g_dict = {}
@@ -59,17 +75,41 @@ def create_data(journal_sort, ids):
     id_data = []
     for idx in ids:
         convs = journal_sort[journal_sort['conversation_id'] == idx]
-        convs_batch = convs[["type", "possibly_sensitive", "lang", "reply_settings",
-                        "retweet_count", "reply_count", "like_count", "quote_count", "impression_count",
-                        "mentions", "urls"]]
-        conv_data.append(list(convs['conversation_id']))
+        convs_batch = convs[['type', 'possibly_sensitive', 'lang', 'reply_settings', 
+                               'retweet_count', 'reply_count', 'like_count', 'quote_count',
+                                'impression_count', 'mentions', 'urls']]
+        #conv_data.append(list(convs['conversation_id']))
+        conv_data.append(convs_batch.to_numpy().tolist())
         ref_data.append(list(convs['reference_id']))
         id_data.append(list(convs['tweet_id']))
         batch_data.append(convs_batch.values.tolist())
         target_data.append(list(convs['labels']))
     
     label_data = target_data
-    return id_data
+    return id_data, conv_data, label_data
+
+def create_mat(local_mat, mat_type):
+    result = []
+    for ind, item in enumerate(local_mat):
+        max_row = max(i[0] for i in item)+1
+        max_col = max(i[1] for i in item)+1
+        if mat_type == 'sum':
+            row = np.array(item)[:,0]
+            col = np.array(item)[:,1]
+
+            # taking data 
+            data = np.array([sum(np.array(i)[2]) for i in item])
+
+            # creating sparse matrix 
+            sparseMatrix = csr_matrix((data, (row, col)), shape = (dim, dim)).toarray() 
+            result.append(sparseMatrix)
+        else:
+            matrix = np.zeros((max_row, max_col, 3), dtype=float)
+            for x in item:
+                row, col, value = x
+                matrix[row, col] = [i + 0.05 for i in value]
+            result.append(matrix)
+    return np.array(result)
 
 def indexing(ls):
     dic = {}
@@ -81,6 +121,7 @@ def indexing(ls):
 def generate_local_mat(local, idx):
     mat = []
     for ids, item in enumerate(local):
+        #print(ids)
         temp = []
         ind = indexing(idx[ids])
         for i in idx[ids]:
@@ -98,9 +139,12 @@ def generate_local_mat(local, idx):
                     temp_ind1 = ind[i]
                     temp_ind2 = ind[int(k)]
                     temp.append([temp_ind1, temp_ind2, temp_l[temp_l[2]]])
+        if not temp:
+            for i in idx[ids]:
+                temp_ind = ind[i]
+                temp.append([temp_ind, temp_ind, [0, 0, 0]])
         mat.append(temp)
     return mat
-
 
 def line_positions(file_path):
     with open(file_path) as f:
@@ -111,19 +155,16 @@ def line_positions(file_path):
             else:
                 break
 
-
 def get_number_of_lines(fobj):
     nol = sum(1 for _ in fobj)
     fobj.seek(0)
     return nol
-
 
 def file_tqdm(f, use_tqdm=False):
     if use_tqdm:
         return tqdm(f, total=get_number_of_lines(f))
     else:
         return f
-
 
 def parallelize(iterable, f, f_args=(), worker_init=None, n_cores=None):
     if n_cores == 1:
@@ -143,10 +184,8 @@ def parallelize(iterable, f, f_args=(), worker_init=None, n_cores=None):
         results = flatten(multiple_results)
     return results
 
-
 def _mp_iterate_over(f, lst, f_args):
     return [f(x, *f_args) for x in lst]
-
 
 def flatten(list_of_lists):
     return [x for xs in list_of_lists for x in xs]
@@ -164,7 +203,6 @@ def get_dfs(ast, only_leaf=False):
             if not only_leaf:
                 dp.append(node["type"])
     return dp
-
 
 def separate_dps(ast, max_len):
     """
@@ -199,7 +237,6 @@ def separate_dps(ast, max_len):
 
     return aug_asts
 
-
 def separate_lrs(lrs, max_len):
     def reformat(lrs, left):  # [left,right)
         new_lrs = []
@@ -224,7 +261,6 @@ def separate_lrs(lrs, max_len):
     idx = max_len - (len(lrs) - (i + half_len))
     aug_asts.append([reformat(lrs[len(lrs) - max_len:], len(lrs) - max_len), idx])
     return aug_asts
-
 
 def separate_types_values(dp, mode):
     """

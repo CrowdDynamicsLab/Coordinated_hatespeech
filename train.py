@@ -43,6 +43,7 @@ def load_data(args):
     id_conv = {}
     for idx in ids:
         id_pair[idx], id_conv[idx] = create_conversation_list(journal_sort[journal_sort['conversation_id']==idx], idx)
+    id_data, data, label = create_data(journal_sort, ids)
     prob = pkl.load(open(os.path.join(args.data_dir, f'{args.journalist}_edgeprob.pkl'), 'rb'))
     
     with open(os.path.join(args.out_fp, f'{args.journalist}_global_path.txt'), "r") as f:
@@ -53,8 +54,10 @@ def load_data(args):
         for line in tqdm(f, total=get_number_of_lines(f)):
             rel.append(json.loads(line.strip()))
     
-    global_data = convert_global(dp, id_data)
+    global_input = convert_global(dp, id_data)
     local_data = convert_local(rel)
+    local_mat = generate_local_mat(local_data, id_data)
+    local_input = create_mat(local_mat, mat_type='concat')
     logging.info(f'loaded split {args.journalist}...')
     # data - dict: dim_process, devtest, args, train, dev, test, index (train/dev/test given as)
     # data[split] - list dicts {'time_since_start': at, 'time_since_last_event': dt, 'type_event': mark} or
@@ -65,12 +68,15 @@ def load_data(args):
     #num_sequences += len(data[split]['arrival_times'])
     num_sequences = len(set(journal_sort['conversation_id']))
     
-    X_train, X_dev, X_test = journal_sort.iloc[:split[0]], journal_sort.iloc[split[0]:split[1]], journal_sort.iloc[split[1]:]
-    prob_train, prob_dev, prob_test = prob[:]
-    
-    d_train = TreeDataset(X_train)
-    d_val = TreeDataset(X_dev)  
-    d_test  = TreeDataset(X_test)   
+    X_train, X_dev, X_test = data[:split[0]], data[split[0]:split[1]], data[split[1]:]
+    prob_train, prob_dev, prob_test = prob[:split[0]], prob[split[0]:split[1]], prob[split[1]:]
+    global_train, global_dev, global_test = global_input[:split[0]], global_input[split[0]:split[1]], global_input[split[1]:]
+    local_train, local_dev, local_test = local_input[:split[0]], local_input[split[0]:split[1]], local_input[split[1]:]
+    label_train, label_dev, label_test = label[:split[0]], label[split[0]:split[1]], label[split[1]:]
+
+    d_train = TreeDataset(X_train, prob_train, global_train, local_train, label_train)
+    d_val = TreeDataset(X_dev, prob_dev, global_dev, local_dev, label_dev)  
+    d_test  = TreeDataset(X_test, prob_test, global_test, local_test, label_test)   
 
     # for padding input sequences to maxlen of batch for running on gpu, and arranging them by length efficient
     collate = collate  
