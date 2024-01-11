@@ -5,8 +5,8 @@ import pickle as pkl
 from pathlib import Path
 from sklearn.model_selection import train_test_split
 
-from utils.utils import *
-from utils.tree_utils import *
+from .utils.utils import *
+from .utils.tree_utils import *
 
 class Batch():
     def __init__(self, data, labels, prob, global_path, local_path, masks):

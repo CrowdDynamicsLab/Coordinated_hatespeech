@@ -85,6 +85,31 @@ def load_data(data_dir, journalist, classes, batch_size, collate):
     dl_test = torch.utils.data.DataLoader(d_test, batch_size=batch_size, shuffle=False, collate_fn=collate)
     return dl_train, dl_val, dl_test
 
+def create_model(num_classes, args):
+    # General model config
+    # general_config = dpp.model.ModelConfig(
+    #     encoder_type=args.encoder_type, use_history=args.use_history, history_size=args.history_size, rnn_type=args.rnn_type,
+    #     use_embedding=args.use_embedding, embedding_size=args.embedding_size, num_embeddings=num_sequences, # seq emb
+    #     use_marks=args.use_marks, mark_embedding_size=args.mark_embedding_size, num_classes=num_classes,
+    #     heads=args.heads, depth=args.depth, wide=args.wide, seq_length=args.max_seq_length, device=args.device,
+    #     pos_enc=args.pos_enc, add=args.add, time_opt=args.time_opt, expand_dim=args.expand_dim,
+    # )
+                    
+    # Decoder specific config
+    model = model.TransformerModel(args.d_model, args.num_heads, args.num_layers, arg.d_ff, args.max_seq_length, args.dropout)
+    # model = nn.DataParallel(dpp.model.Model(general_config, decoder)).to(args.device)
+    model = model.to(args.device)
+    logging.info(model)
+    
+    opt = torch.optim.Adam(model.parameters(), weight_decay=args.regularization, lr=args.learning_rate)
+    model = model.to(args.device)
+    #opt = torch.optim.Adam(model.module.parameters(), weight_decay=args.regularization, lr=args.learning_rate)
+    #opt = torch.nn.DataParallel(opt,[1,2,3])
+    # for name, param in model.named_parameters():
+    #    logging.info(name, param.device)
+    
+    return model, opt
+
 
 
 
@@ -101,10 +126,24 @@ if __name__=='__main__':
     parser.add_argument('--log_filename', type=str, default='run.log')
     parser.add_argument('--journalist', type=str, default='aliceysu')
     parser.add_argument('--classes', type=int, default=3)
+
+    ## model encoder parameters
+    parser.add_argument('--depth', type=int, default=1)
+    parser.add_argument('--wide', dest='wide', default=True, action='store_true', help='Change back')
+    parser.add_argument('--num_heads', type=int, default=4)
+    parser.add_argument('--num_layers', type=int, default=3, help='flow-based models.')
+    parser.add_argument('--d_ff', type=int, default=None)
+    parser.add_argument('--max_seq_length', type=int, default=2000)
+    parser.add_argument('--dropout', type=float, default=0.1)
+
     
     
     ## training arguments
     parser.add_argument('--seed', type=int, default=42)
+    parser.add_argument('--device', type=str, default='cuda')
+    parser.add_argument('--regularization', type=float, default=1e-5)
+    parser.add_argument('--learning_rate', type=float, default=1e-3)
+    
     
     args = parser.parse_args()
     args.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
@@ -127,7 +166,7 @@ if __name__=='__main__':
     logging.info('loaded the dataset and formed torch dataloaders.')
 
     
-    # model, opt = create_model(num_classes, num_sequences, args, mean_out_train, std_out_train)
+    model, opt = create_model(args.classes, num_sequences, args, mean_out_train, std_out_train)
     logging.info('model created from config hyperparameters.')
     # gmm = GaussianLaplaceTiedMixture(args.gmm_k, 0, args.mark_embedding_size, device = args.device)
     
