@@ -110,6 +110,147 @@ def create_model(num_classes, args):
     
     return model, opt
 
+def train(model, opt, dl_train, dl_val, logging, use_marks, 
+          max_epochs, patience, display_step, save_freq, out_dir, device, args, gmm = None):
+    # Training (max_epochs or until the early stopping condition is satisfied)
+    # Function that calculates the loss for the entire dataloader
+    #gmm = GaussianTiedMixture(args.gmm_k, args.mark_embedding_size, device = device)
+    #gmm.to(device)
+    impatient = 0
+    best_loss = np.inf
+    best_model = deepcopy(model.state_dict())
+    best_gmm = deepcopy(gmm.state_dict())
+    plot_val_losses = []
+    sum_vec = [args.gpu0sz/args.batch_size]
+    for i in range(3):
+        sum_vec.append((args.batch_size-args.gpu0sz)/(3*args.batch_size))
+    sum_vec = torch.tensor(sum_vec).to(device)
+    for loop in range(args.max_loop):
+        print('THIS IS LOOP', loop)
+        best_in_this_loop = False
+        impatient = 0
+        if loop == 1:
+            best_loss = np.inf
+        if loop == 0:
+            best_in_this_loop = True
+        for epoch in range(max_epochs):
+            # Train epoch
+            model.train()
+            for input in dl_train:
+                #input = input.in_time.to(device), input.out_time.to(device),input.length.to(device), input.index.to(device),input.in_mark.to(device), input.out_mark.to(device)#move_input_batch_to_device(input, device)
+                opt.zero_grad()
+                loss = model(input.in_time.to(device), input.out_time.to(device),input.length.to(device),
+                             input.index.to(device), input.in_mark.to(device), input.out_mark.to(device), 
+                             input.in_tweet_type.to(device), input.out_tweet_type.to(device), 
+                             use_marks, device)
+                '''if use_marks:
+                    log_prob, mark_nll, accuracy = model.log_prob(input)
+                    loss = -model.module.aggregate(log_prob, input.length, device) + model.module.aggregate(
+                        mark_nll, input.length, device)
+                    del log_prob, mark_nll, accuracy
+                else:
+                    loss = -model.module.aggregate(model.module.log_prob(input), input.length, device)'''
+                loss = (loss*sum_vec).sum()
+                if loop != 0:
+                    marks_set = set()
+                    for batch in input.in_mark.tolist():
+                        marks_set |= set(batch)
+                    marks = torch.tensor(list(marks_set)).to(args.device)
+                    marks_emb = model.rnn.mark_embedding(marks)
+                    #print(marks_emb.size())
+                    #print('loss_pre',loss)
+                    loss += -gmm.score_samples(marks_emb).mean()/args.mark_embedding_size
+                    #print('loss_post',loss)
+                loss.backward()
+                opt.step()
+            # End of Train epoch
+
+            model.eval()  # val losses over all val batches aggregated
+            loss_val, loss_val_time, loss_val_marks, loss_val_acc = get_total_loss(
+                dl_val, model, use_marks, device)
+            loss_gmm = 0.0
+            if loop != 0:
+                loss_gmm = -gmm.score_samples(model.rnn.mark_embedding.weight.detach()).mean()/args.mark_embedding_size
+                loss_val += loss_gmm
+            plot_val_losses.append([loss_val, loss_val_time, loss_val_marks, loss_val_acc, loss_gmm])
+
+            if (best_loss - loss_val) < 1e-4:
+                impatient += 1
+                if loss_val < best_loss:
+                    best_loss = loss_val
+                    best_model = deepcopy(model.state_dict())
+                    if not best_in_this_loop:
+                        best_in_this_loop = True
+                        best_gmm = deepcopy(gmm.state_dict())
+            else:
+                best_loss = loss_val
+                best_model = deepcopy(model.state_dict())
+                impatient = 0
+                if not best_in_this_loop:
+                    best_in_this_loop = True
+                    best_gmm = deepcopy(gmm.state_dict())
+
+            if impatient >= patience:
+                logging.info(f'Breaking due to early stopping at epoch {epoch}'); break
+
+            if (epoch + 1) % display_step == 0:
+                amdn_loss = loss_val-loss_gmm
+                logging.info(f"Epoch {epoch+1:4d}, trlast = {loss:.4f}, val = {loss_val:.4f}, amdn_loss = {amdn_loss:.4f}, gmmval = {loss_gmm:.4f}")
+            
+            if (epoch + 1) % save_freq == 0:
+                if loop == 0:
+                    torch.save(best_model, os.path.join(out_dir, 'best_pre_train_model_state_dict_ep_{}.pt'.format(epoch)))
+                    # evaluate(model, [dl_train, dl_val], ['Ckpt_train', 'Ckpt_val'], use_marks, device)
+                    logging.info(f"saved intermediate pre-trained checkpoint")
+                else:
+                    torch.save(best_model, os.path.join(out_dir, 'best_model_state_dict_iter_{}_ep_{}.pt'.format(loop, epoch)))
+                    # evaluate(model, [dl_train, dl_val], ['Ckpt_train', 'Ckpt_val'], use_marks, device)
+                    logging.info(f"saved intermediate checkpoint")
+        model.load_state_dict(best_model)
+        ## fitting gmm
+        #gmm.to(args.device)
+        if loop < args.max_loop:
+            print('fitting gmm')
+            if loop == 0:
+                z = model.rnn.mark_embedding.weight.cpu().detach().numpy()
+                km = KMeans(n_clusters=args.gmm_k, random_state=0, n_init=50, max_iter=500).fit(z)
+                
+                #km.fit(z)
+                
+                mu_init=torch.tensor(km.cluster_centers_).unsqueeze(0)
+                #var_init=torch.tensor(tmpGmm.covariances_).unsqueeze(0).unsqueeze(0)
+                gmm.mu_init = mu_init
+                #gmm.var_init = var_init
+                gmm._init_params()
+                #pi = np.concatenate((tmpGmm.weights_[g_cls],tmpGmm.weights_[l_cls]), axis = 0)
+                #gmm.pi.data = torch.tensor(pi).unsqueeze(0).unsqueeze(-1).to(args.device)
+            gmm.fit(model.rnn.mark_embedding.weight.detach().to(args.device), warm_start=True)
+            print(-gmm.score_samples(model.rnn.mark_embedding.weight.detach().to(args.device)).mean()/args.mark_embedding_size)
+        
+    logging.info('Training finished.............')
+    torch.save(best_model, os.path.join(out_dir, 'best_model_state_dict.pt'))
+    torch.save(best_gmm, os.path.join(out_dir, 'best_gmm.pt'))
+    model.load_state_dict(best_model)
+    torch.save(model, os.path.join(out_dir, 'best_full_model.pt'))
+    logging.info(f"The entire model is saved in {os.path.join(out_dir, 'best_full_model.pt')}.")    
+    # loading model model = torch.load(save_model_path)
+    
+    # Plot training curve displaying separated validation losses
+    plot_loss = np.array(torch.tensor(plot_val_losses).detach().cpu())
+    if len(plot_loss) > patience:
+        plot_loss = plot_loss[:-patience] # plot only until early stopping
+    fig, axes = plt.subplots(1, 5, figsize=(20, 4))
+    plot_labels = ['Total_loss', 'Time_NLL', 'Marks_NLL', 'Marks_Acc', 'GMM_Loss']
+    for i in range(plot_loss.shape[1]):
+        ax = axes[i]
+        ax.plot(range(len(plot_loss)), plot_loss[:, i], marker='o', label=plot_labels[i], markersize=3)
+        ax.set_xlabel('Val Loss vs. Training Epoch')
+        # ax.set_ylabel(plot_labels[i])
+        # ax.set_title('Validation dataset')
+        ax.legend()
+    plt.savefig(os.path.join(out_dir, 'training_curve.png'))
+    
+
 
 
 
@@ -166,13 +307,11 @@ if __name__=='__main__':
     logging.info('loaded the dataset and formed torch dataloaders.')
 
     
-    model, opt = create_model(args.classes, num_sequences, args, mean_out_train, std_out_train)
+    model, opt = create_model(args.classes, args)
     logging.info('model created from config hyperparameters.')
-    # gmm = GaussianLaplaceTiedMixture(args.gmm_k, 0, args.mark_embedding_size, device = args.device)
-    
-    # gmm.to(args.device)
-    # train(model, opt, dl_train, dl_val, logging, args.use_marks, args.max_epochs, args.patience, 
-    #       args.display_step, args.save_freq, args.out_dir, args.device, args, gmm = gmm)
+
+    train(model, opt, dl_train, dl_val, logging, args.use_marks, args.max_epochs, args.patience, 
+          args.display_step, args.save_freq, args.out_dir, args.device, args)
 
     # def evaluate(model, dl_list, dl_names, use_marks, device):
     #     # Calculate the train/val/test loss, plot training curve
