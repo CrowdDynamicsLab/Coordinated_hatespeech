@@ -5,26 +5,47 @@ import pickle as pkl
 from pathlib import Path
 from sklearn.model_selection import train_test_split
 
-def collate(batch):
+from utils.utils import *
+from utils.tree_utils import *
 
-    data= torch.tensor([item[0] for item in batch]).to(torch.int64)
-    labels = torch.tensor([item[1] for item in batch]).to(torch.int64)
-    prob = torch.tensor([item[2] for item in batch]).to(torch.int64)
-    global_path = torch.tensor([item[3] for item in batch]).to(torch.int64)
-    local_path = torch.tensor([item[4] for item in batch]).to(torch.int64)
+class Batch():
+    def __init__(self, data, labels, prob, global_path, local_path, masks):
+        self.data = data
+        self.labels = labels
+        self.prob = prob
+        self.global_path = global_path
+        self.local_path = local_path
+        self.masks = masks
+
+def collate(batch):
+    batch_li = [list(item) for item in batch]
+    data_temp = [row[0] for row in batch_li]
+    labels_temp = [torch.Tensor(row[1]) for row in batch_li]
+    prob_temp = [torch.Tensor(row[2]) for row in batch_li]
+    global_path_temp = [row[3] for row in batch_li]
+    local_path_temp = [row[4] for row in batch_li]
+    
+
+    padded_data, masks = pad_sequences(data_temp, max_dim=2000, pad_token=0)
+    #padded_labels = pad_labels(labels_temp, max_dim=2000, pad_token=0)
+    #padded_prob, _ = pad_sequences(prob_temp, max_dim=2000, pad_token=0)
+    padded_global, _ = pad_sequences(summ(global_path_temp), max_dim=2000, pad_token=0)
+    padded_local = pad_matrix(local_path_temp, max_dim=2000, pad_token=0)
+
+    data= torch.tensor(padded_data).to(torch.int64)
+    #labels = torch.tensor(padded_labels).to(torch.int64)
+    #prob = torch.tensor(padded_prob).to(torch.int64)
+    global_path = torch.tensor(padded_global).to(torch.int64)
+    local_path = torch.tensor(padded_local).to(torch.int64)
+    labels = torch.nn.utils.rnn.pad_sequence(labels_temp, batch_first=True)
+    prob = torch.nn.utils.rnn.pad_sequence(prob_temp, batch_first=True)
+    #global_path = torch.nn.utils.rnn.pad_sequence(global_path_temp, batch_first=True)
+    #local_path = torch.nn.utils.rnn.pad_sequence(local_path_temp, batch_first=True)
+    #print(masks)
+    
     #out_tweet_type = torch.nn.utils.rnn.pad_sequence(out_tweet_types, batch_first=True)
     #print("start")
-    #return Batch(in_time, out_time, length, in_mark=in_mark, out_mark=out_mark, in_tweet_type=in_tweet_type, out_tweet_type=out_tweet_type, index=index)
-    #return Batch(conv_id, ref_id, tweet_id, type, sens, lang, reply, retweet_count, like_count, quote_count, 
-    #             impression_count, mentions, urls, labels, length)
-    return {
-            "labels": labels,
-            "data": data,
-            "prob": prob,
-            "glb": global_path,
-            "rel": local_path,
-            "labels": labels
-        }
+    return Batch(data, labels, prob, global_path, local_path, torch.tensor(masks))
     
     
 class TreeDataset(torch.utils.data.Dataset):

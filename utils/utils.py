@@ -20,9 +20,11 @@ from scipy.sparse import csr_matrix
 
 #from . import constants
 
-def pad_sequences(sequences, pad_token=0):
+def pad_sequences(sequences, max_dim=None, pad_token=0):
     # Determine the maximum sequence length
     max_length = max(len(seq) for seq in sequences)
+    if max_dim is not None and max_length > max_dim:
+        max_length = max_dim
 
     # Pad each sequence to the maximum length
     padded_sequences = np.array([np.pad(seq, ((0, max_length - len(seq)), (0, 0)), 
@@ -34,6 +36,35 @@ def pad_sequences(sequences, pad_token=0):
                                 for seq in padded_sequences])
     
     return padded_sequences, attention_masks
+
+def pad_labels(labels, max_dim, pad_token=0):
+    """Pad the label sequence to the maximum length."""
+    max_length = max(len(seq) for seq in labels)
+    if max_dim is not None and max_length > max_dim:
+        max_length = max_dim
+        
+    return np.array([np.pad(seq, (0, max_length - len(seq)), mode='constant', constant_values=pad_token) 
+                                 for seq in labels])
+
+def pad_matrix(path, max_dim=None, pad_token=0):
+    """Pad a 2D matrix to the specified max_length."""
+    max_length = max(matrix.shape[0] for matrix in path)
+    if max_dim is not None and max_length > max_dim:
+        max_length = max_dim
+        
+    padded_matrices = []
+    for matrix in path:
+        truncated_matrix = matrix[:max_length, :max_length, :]
+        padding = ((0, max(0, max_length - truncated_matrix.shape[0])), 
+                   (0, max(0, max_length - truncated_matrix.shape[1])), 
+                   (0, 0))
+        adjusted_matrix = np.pad(truncated_matrix, pad_width=padding, mode='constant', constant_values=pad_token)
+        padded_matrices.append(adjusted_matrix)
+
+    return padded_matrices
+
+def summ(paths):
+    return [[list(map(sum, zip(*sub))) for sub in outer] for outer in paths]
 
 def convert_path(g_list):
     g_dict = {}

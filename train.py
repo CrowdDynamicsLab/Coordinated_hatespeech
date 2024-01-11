@@ -27,7 +27,7 @@ from utils.utils import *
 from utils.tree_utils import *
 
 
-def load_data(args):
+def load_data(data_dir, journalist, classes, batch_size, collate):
     ### Data (normalize input inter-event times, then padding to create dataloaders)
     num_classes, num_sequences = 0, 0
     seq_dataset = []
@@ -37,20 +37,20 @@ def load_data(args):
     
     split = [64, 128]
     val = 0
-    journal_sort = pd.read_csv((os.path.join(args.data_dir, f'{args.journalist}_context.csv')))
+    journal_sort = pd.read_csv((os.path.join(data_dir, f'{journalist}_context.csv')))
     ids = list(set(journal_sort['conversation_id']))
     id_pair = {}
     id_conv = {}
     for idx in ids:
         id_pair[idx], id_conv[idx] = create_conversation_list(journal_sort[journal_sort['conversation_id']==idx], idx)
     id_data, data, label = create_data(journal_sort, ids)
-    prob = pkl.load(open(os.path.join(args.data_dir, f'{args.journalist}_edgeprob.pkl'), 'rb'))
+    prob = pkl.load(open(os.path.join(data_dir, f'{journalist}_edgeprob.pkl'), 'rb'))
     
-    with open(os.path.join(args.out_fp, f'{args.journalist}_global_path.txt'), "r") as f:
+    with open(os.path.join(data_dir, f'{journalist}_global_path.txt'), "r") as f:
         for line in tqdm(f, total=get_number_of_lines(f)):
             dp.append(json.loads(line.strip()))
 
-    with open(os.path.join(args.out_fp, f'{args.journalist}_local_path.txt'), "r") as f:
+    with open(os.path.join(data_dir, f'{journalist}_local_path.txt'), "r") as f:
         for line in tqdm(f, total=get_number_of_lines(f)):
             rel.append(json.loads(line.strip()))
     
@@ -58,13 +58,13 @@ def load_data(args):
     local_data = convert_local(rel)
     local_mat = generate_local_mat(local_data, id_data)
     local_input = create_mat(local_mat, mat_type='concat')
-    logging.info(f'loaded split {args.journalist}...')
+    logging.info(f'loaded split {journalist}...')
     # data - dict: dim_process, devtest, args, train, dev, test, index (train/dev/test given as)
     # data[split] - list dicts {'time_since_start': at, 'time_since_last_event': dt, 'type_event': mark} or
     # data[split] - dict {'arrival_times', 'delta_times', 'marks'}
     # data['dim_process'] = Number of accounts = 119,298
     # num_sequences: number of conversations of a journalist
-    num_classes = args.classes
+    num_classes = classes
     #num_sequences += len(data[split]['arrival_times'])
     num_sequences = len(set(journal_sort['conversation_id']))
     
@@ -80,14 +80,10 @@ def load_data(args):
 
     # for padding input sequences to maxlen of batch for running on gpu, and arranging them by length efficient
     collate = collate  
-    dl_train = torch.utils.data.DataLoader(d_train, batch_size=args.batch_size, shuffle=False, collate_fn=collate)
-    dl_val = torch.utils.data.DataLoader(d_val, batch_size=args.val_batch_size, shuffle=False, collate_fn=collate)
-    dl_test = torch.utils.data.DataLoader(d_test, batch_size=args.val_batch_size, shuffle=False, collate_fn=collate)
-    return dl_train, dl_val, dl_test, num_classes, num_sequences
-
-
-
-
+    dl_train = torch.utils.data.DataLoader(d_train, batch_size=batch_size, shuffle=False, collate_fn=collate)
+    dl_val = torch.utils.data.DataLoader(d_val, batch_size=batch_size, shuffle=False, collate_fn=collate)
+    dl_test = torch.utils.data.DataLoader(d_test, batch_size=batch_size, shuffle=False, collate_fn=collate)
+    return dl_train, dl_val, dl_test
 
 
 
@@ -126,13 +122,13 @@ if __name__=='__main__':
     ) # logger = logging.getLogger('')
     logging.info('Logging any runs of this program - appended to same file.')
     logging.info('Arguments = {}'.format(args))
-    dl_train, dl_val, dl_test, mean_out_train, std_out_train, num_classes, num_sequences = load_data(args)
-    print("TRAIN", dl_train)
+    dl_train, dl_val, dl_test = load_data(args.data_dir, args.journalist, args.classes, args.batch_size, collate)
+    
     logging.info('loaded the dataset and formed torch dataloaders.')
 
     
     # model, opt = create_model(num_classes, num_sequences, args, mean_out_train, std_out_train)
-    # logging.info('model created from config hyperparameters.')
+    logging.info('model created from config hyperparameters.')
     # gmm = GaussianLaplaceTiedMixture(args.gmm_k, 0, args.mark_embedding_size, device = args.device)
     
     # gmm.to(args.device)
