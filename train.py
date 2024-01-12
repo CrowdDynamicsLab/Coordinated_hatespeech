@@ -96,7 +96,9 @@ def create_model(num_classes, args):
     # )
                     
     # Decoder specific config
-    model = model.TransformerModel(args.d_model, args.num_heads, args.num_layers, arg.d_ff, args.max_seq_length, args.dropout)
+    model = model.TransformerModel(args.d_model, args.num_heads, 
+                                   args.num_layers, args.d_ff, args.max_seq_length, 
+                                   args.dropout, args.attn)
     # model = nn.DataParallel(dpp.model.Model(general_config, decoder)).to(args.device)
     model = model.to(args.device)
     logging.info(model)
@@ -276,6 +278,7 @@ if __name__=='__main__':
     parser.add_argument('--d_ff', type=int, default=None)
     parser.add_argument('--max_seq_length', type=int, default=2000)
     parser.add_argument('--dropout', type=float, default=0.1)
+    parser.add_argument('--attn', type=str, default='all', help='dp or rel or only')
 
     
     
@@ -284,6 +287,11 @@ if __name__=='__main__':
     parser.add_argument('--device', type=str, default='cuda')
     parser.add_argument('--regularization', type=float, default=1e-5)
     parser.add_argument('--learning_rate', type=float, default=1e-3)
+    parser.add_argument('--max_epochs', type=int, default=50)  # 1000 
+    parser.add_argument('--max_loop', type=int, default=1)
+    parser.add_argument('--patience', type=int, default=2)
+    parser.add_argument('--save_freq', type=int, default=1)
+    parser.add_argument('--display_step', type=int, default=1)
     
     
     args = parser.parse_args()
@@ -310,7 +318,7 @@ if __name__=='__main__':
     model, opt = create_model(args.classes, args)
     logging.info('model created from config hyperparameters.')
 
-    train(model, opt, dl_train, dl_val, logging, args.use_marks, args.max_epochs, args.patience, 
+    train(model, opt, dl_train, dl_val, logging, args.max_epochs, args.patience, 
           args.display_step, args.save_freq, args.out_dir, args.device, args)
 
     # def evaluate(model, dl_list, dl_names, use_marks, device):

@@ -84,8 +84,6 @@ class RelativeAttention(Attention):
             rel = rel.permute(0, 3, 1, 2)
         return self.self_attention(query, key, value, rel, tds, lr)
 
-
-
 class MultiHeadAttention(nn.Module):
     def __init__(self, d_model, num_heads):
         super(MultiHeadAttention, self).__init__()
