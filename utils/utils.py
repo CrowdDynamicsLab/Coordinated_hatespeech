@@ -27,9 +27,15 @@ def pad_sequences(sequences, max_dim=None, pad_token=0):
         max_length = max_dim
 
     # Pad each sequence to the maximum length
+    temp_seq = []
+    for seq in sequences:
+        if len(seq) >= max_length:
+            temp_seq.append(seq[:max_length])
+        else:
+            temp_seq.append(seq)
     padded_sequences = np.array([np.pad(seq, ((0, max_length - len(seq)), (0, 0)), 
                                         mode='constant', constant_values=pad_token) 
-                                 for seq in sequences])
+                                 for seq in temp_seq])
 
     # Create attention masks
     attention_masks = np.array([[1 if token.any() else 0 for token in seq] 
@@ -42,9 +48,16 @@ def pad_labels(labels, max_dim, pad_token=0):
     max_length = max(len(seq) for seq in labels)
     if max_dim is not None and max_length > max_dim:
         max_length = max_dim
-        
+    
+    temp_seq = []
+    for seq in labels:
+        if len(seq) >= max_length:
+            temp_seq.append(seq[:max_length])
+        else:
+            temp_seq.append(seq)
+
     return np.array([np.pad(seq, (0, max_length - len(seq)), mode='constant', constant_values=pad_token) 
-                                 for seq in labels])
+                                 for seq in temp_seq])
 
 def pad_matrix(path, max_dim=None, pad_token=0):
     """Pad a 2D matrix to the specified max_length."""
@@ -124,6 +137,7 @@ def create_mat(local_mat, mat_type):
     for ind, item in enumerate(local_mat):
         max_row = max(i[0] for i in item)+1
         max_col = max(i[1] for i in item)+1
+        max_dim = max(max_row, max_col) ## new max
         if mat_type == 'sum':
             row = np.array(item)[:,0]
             col = np.array(item)[:,1]
@@ -135,12 +149,12 @@ def create_mat(local_mat, mat_type):
             sparseMatrix = csr_matrix((data, (row, col)), shape = (dim, dim)).toarray() 
             result.append(sparseMatrix)
         else:
-            matrix = np.zeros((max_row, max_col, 3), dtype=float)
+            matrix = np.zeros((max_dim, max_dim, 3), dtype=float)
             for x in item:
                 row, col, value = x
                 matrix[row, col] = [i + 0.05 for i in value]
             result.append(matrix)
-    return np.array(result)
+    return np.array(result, dtype=object)
 
 def indexing(ls):
     dic = {}
@@ -164,7 +178,10 @@ def generate_local_mat(local, idx):
                     temp_ind = ind[i]
                     temp.append([temp_ind, temp_ind, temp_l[temp_l[2]]])
                 elif int(k) not in idx[ids]:
-                    continue
+                    #continue
+                    temp_ind1 = 0
+                    temp_ind2 = ind[i]
+                    temp.append([temp_ind1, temp_ind2, temp_l[temp_l[2]]])
                 else:
                     temp_l = local[ids][str(i)][k]
                     temp_ind1 = ind[i]
@@ -268,15 +285,27 @@ def separate_dps(ast, max_len):
 
     return aug_asts
 
-def separate_lrs(lrs, max_len):
+def id_mapping(name_li):
+    count = 0
+    id_map = {}
+    id_re = {}
+    for item in name_li:
+        if item not in id_map.keys():
+            id_map[item] = count
+            id_re[count] = item
+            count += 1
+    #id_list = [id_map[item] for item in name_li]
+    return id_map, id_re
+
+def separate_lrs(lrs, id_map, id_re, max_len):
     def reformat(lrs, left):  # [left,right)
         new_lrs = []
         for idx, lr in enumerate(lrs):
             # lr -> dict: {idx:[],idx:[]}
             temp_lr = dict()
             for key, val in lr.items():
-                if left <= key < left + max_len:
-                    temp_lr[key - left] = val
+                if left <= id_map[key] < left + max_len:
+                    temp_lr[id_re[id_map[key] - left]] = val
             new_lrs.append(temp_lr)
         return new_lrs
 
@@ -292,6 +321,7 @@ def separate_lrs(lrs, max_len):
     idx = max_len - (len(lrs) - (i + half_len))
     aug_asts.append([reformat(lrs[len(lrs) - max_len:], len(lrs) - max_len), idx])
     return aug_asts
+
 
 def separate_types_values(dp, mode):
     """

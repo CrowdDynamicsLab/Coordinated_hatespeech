@@ -111,20 +111,29 @@ def get_node_info(tree_root):
 def create_conversation_list(df, idx):
     conversations = []
     set_k = [idx]
+    count = 0
     for _, row in df.iterrows():
-        if idx != row['reference_id'] and [idx, row['reference_id']] not in conversations and row['reference_id'] not in df['tweet_id']:
+        if idx != row['reference_id'] and [idx, row['reference_id']] not in conversations \
+        and row['reference_id'] not in df['tweet_id'] and row['reference_id'] not in set_k:
             pair = [idx, row['reference_id']]
             conversations.append(pair)
             set_k.append(pair[0])
             set_k.append(pair[1])
+            if pair == [14, 51]:
+                print("??")
+                print(row)
+
         if row['reference_id'] not in set_k:
             pair = [idx, row['reference_id']]
             set_k.append(pair[1])
             conversations.append(pair)
+
         pair = [row['reference_id'], row['tweet_id']]
         set_k.append(pair[0])
         set_k.append(pair[1])
+        #print(count, set_k)
         conversations.append(pair)
+        count += 1
     return conversations, list(set(set_k)- set([idx])) 
 
 

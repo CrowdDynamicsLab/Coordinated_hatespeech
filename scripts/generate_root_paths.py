@@ -27,10 +27,10 @@ def main():
     parser.add_argument("--data_dir", "-o", default="../../data", help="filepath with the ASTs to be parsed")
     parser.add_argument("--journalist", type=str, default="aliceysu", help="filepath with the ASTs to be parsed")
     parser.add_argument(
-        "--out_dir", "-o", default="../../result/", help="filepath for the output dps"
+        "--out_dir", "-o", default="../../data/", help="filepath for the output dps"
     )
     parser.add_argument(
-        "--n_ctx", "-c", type=int, default=1000, help="max context length for each dp"
+        "--n_ctx", "-c", type=int, default=2000, help="max context length for each dp"
     )
     parser.add_argument(
         "--max_width", type=int, default=16, help="max number of child ids"
@@ -49,23 +49,24 @@ def main():
     logging.info("Number of context: {}".format(args.n_ctx))
 
     num_dps = 0
-    data = pkl.load(open(os.path.join(args.data_dir, f'{args.journalist}_dict.pkl'), 'rb'))
+    #data = pkl.load(open(os.path.join(args.data_dir, f'{args.journalist}_dict.pkl'), 'rb'))
     num_classes = 3
     num_sequences = len(set(data['conversation_id']))
-    journal = pd.DataFrame.from_dict(data)
-    journal_sort = journal.sort_values(by=['created_at'])
+    #journal = pd.DataFrame.from_dict(data)
+    #journal_sort = journal.sort_values(by=['created_at'])
+    journal_sort = pd.read_csv(os.path.join(args.data_dir, f'{args.journalist}/{args.journalist}_context.csv'))
 
     journal_batch = journal_sort[["type", "possibly_sensitive", "lang", "reply_settings",
                                 "retweet_count", "reply_count", "like_count", "quote_count", "impression_count",
                                 "mentions", "urls", "labels"]]
-    ids = list(set(journal['conversation_id']))
+    ids = list(set(journal_sort['conversation_id']))
     id_pair = {}
     for idx in ids:
         id_pair[idx] = create_conversation_list(journal_sort[journal_sort['conversation_id']==idx], idx)
 
     if args.local_relation:
         print("Save Relation between Child and Father")
-        with open(os.path.join(args.out_fp, f'{args.journalist}_local_path.txt'), "w") as fout:
+        with open(os.path.join(args.out_dir, f'{args.journalist}/{args.journalist}_local_path.txt'), "w") as fout:
             for k in id_pair.keys():
                 tree_root = build_tree(id_pair[k])
                 

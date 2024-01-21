@@ -1,227 +1,184 @@
 import torch
 import torch.nn as nn
-import torch.optim as optim
-import torch.utils.data as data
+import torch.nn.functional as F
+from torch import optim
 import math
-import copy
-
-# needs modify
-class RelativeAttention(Attention):
-    def __init__(
-            self, nx, n_ctx, n_head, scale=False, dropout=None, additive=False,
-            use_tree=False, use_seq=False, rel_vocab_size=None, use_global=True, use_local=True, args=None
-    ):
-        super(RelativeAttention, self).__init__(nx, n_ctx, n_head, scale, dropout)
-        self.additive = additive
-        self.use_seq = use_seq
-        self.use_tree = use_tree
-
-        self.use_global = use_global
-        self.use_local = use_local
-
-        self.rel_weights = nn.Embedding(rel_vocab_size, n_head)
-
- 
-
-
-    def matmul_with_relative_representations(self, q, rel, transpose_rel=False):
-        # sequential relative attention helper function
-        # yian: Masked matrix?
-        # q: [b, h, n, dh] -> [n, b, h, dh] -> [n, b*h, dh] : batch, head, seq, q_feature
-        # rel: [n, n, dh] -> [n, dh, n] 
-        # return: [b, h, n, n]
-        nb, nh, nt, _ = q.size()
-        q = q.permute(2, 0, 1, 3).contiguous()
-        q = q.reshape(q.size(0), nb * nh, q.size(-1))
-        if not transpose_rel:
-            rel = rel.permute(0, 2, 1)
-        x = torch.matmul(q, rel)
-        x = x.reshape(nt, nb, nh, -1)
-        x = x.permute(1, 2, 0, 3).contiguous()
-        return x
-
-    def _attn(self, q, k, v, tds=None, lr=None):
-        # (batch, head, seq_length, head_features)
-        # q = xW^Q
-        # k = xW^K
-        w = torch.matmul(q, k) # alpha_ij
-        nd, ns = w.size(-2), w.size(-1)
-
-        if self.use_global:
-            B = torch.matmul(tds.unsqueeze(3), tds.unsqueeze(2).transpose(-1, -2))
-            w = w + B
-
-        if self.scale:
-            w = w / math.sqrt(v.size(-1))
-
-        
-        r = self.rel_matrix(lr)
-        if self.use_local:
-            first_term = torch.matmul(q.unsqueeze(3), r.transpose(-1, -2))
-            second_term = torch.matmul(r, k.unsqueeze(2).transpose(-1, -2))
-            Y = first_term + second_term
-            w = w + Y
-
-
-        w_normed = nn.Softmax(dim=-1)(w)  # calc attention scores
-        if self.dropout is not None:
-            w_normed = self.dropout(w_normed)
-
-        ret = torch.matmul(w_normed, v)
-
-        return ret
-
-    def self_attention(self, query, key, value, rel, tds, lr):
-        a = self._attn(query, key, value, rel, tds, lr)
-        a = self.merge_heads(a)
-        a = self.c_proj(a)
-        return a
-
-    def forward(self, x, rel=None, tds=None, lr=None):
-        query, key, value = self.get_q_k_v(x)
-        if self.use_tree:
-            rel = self.rel_weights(rel)
-            rel = rel.permute(0, 3, 1, 2)
-        return self.self_attention(query, key, value, rel, tds, lr)
 
 class MultiHeadAttention(nn.Module):
-    def __init__(self, d_model, num_heads):
+    def __init__(self, embed_size, heads):
         super(MultiHeadAttention, self).__init__()
-        assert d_model % num_heads == 0, "d_model must be divisible by num_heads"
         
-        self.d_model = d_model
-        self.num_heads = num_heads
-        self.d_k = d_model // num_heads
+        self.embed_size = embed_size
+        self.heads = heads
+        self.head_dim = embed_size // heads
+
+        assert (
+            self.head_dim * heads == embed_size
+        ), "Embedding size needs to be divisible by heads"
+
+        self.values = nn.Linear(self.head_dim, self.head_dim, bias=False)
+        self.keys = nn.Linear(self.head_dim, self.head_dim, bias=False)
+        self.queries = nn.Linear(self.head_dim, self.head_dim, bias=False)
         
-        self.W_q = nn.Linear(d_model, d_model)
-        self.W_k = nn.Linear(d_model, d_model)
-        self.W_v = nn.Linear(d_model, d_model)
-        self.W_o = nn.Linear(d_model, d_model)
+        self.pos_keys = nn.Linear(self.head_dim, self.head_dim, bias=False)
+        self.pos_queries = nn.Linear(self.head_dim, self.head_dim, bias=False)
         
-    def scaled_dot_product_attention(self, Q, K, V, mask=None):
-        attn_scores = torch.matmul(Q, K.transpose(-2, -1)) / math.sqrt(self.d_k)
+        # Linear transformations for the rel tensor
+        self.rel_keys = nn.Linear(self.head_dim, self.head_dim, bias=False)
+        self.rel_queries = nn.Linear(self.head_dim, self.head_dim, bias=False)
+
+        self.fc_out = nn.Linear(heads * self.head_dim, embed_size)
+    
+    def forward(self, values, keys, query, pos, rel, mask, mode):
+        N = query.shape[0]
+        value_len, key_len, query_len = values.shape[1], keys.shape[1], query.shape[1]
+        #print(N, query_len, self.heads, self.head_dim, rel.size())
+        # Split into multiple heads
+        values = values.reshape(N, value_len, self.heads, self.head_dim)
+        keys = keys.reshape(N, key_len, self.heads, self.head_dim)
+        queries = query.reshape(N, query_len, self.heads, self.head_dim)
+        pos = pos.reshape(N, query_len, self.heads, self.head_dim)
+        rel = rel.reshape(N, query_len, query_len, self.heads, self.head_dim)
+        #rel = rel.reshape(N, query_len, -1, self.head_dim)
+
+        values = self.values(values)
+        keys = self.keys(keys)
+        queries = self.queries(queries)
+        
+        attention_scores = torch.einsum("nqhd,nkhd->nhqk", [queries, keys])
+        
+        if mode == 'only':
+            energy = (attention_scores) / math.sqrt(2)
+        
+        elif mode == 'rel':
+            # Transform the rel tensor
+            rel_keys = self.rel_keys(rel)
+            rel_queries = self.rel_queries(rel)
+            # Calculate the rel scores
+            #rel_scores_1 = torch.einsum("nqhd,nkhd->nhqk", [queries, rel_keys])
+            #rel_scores_2 = torch.einsum("nqhd,nkhd->nhqk", [rel_queries, keys])
+            rel_scores_1 = torch.einsum("bqhd,bqkhd->bhqk", [queries, rel_keys])
+            rel_scores_2 = torch.einsum("bqkhd,bkhd->bhqk", [rel_queries, keys])
+            
+            all_scores = attention_scores + rel_scores_1 + rel_scores_2
+            energy = all_scores / math.sqrt(2)
+            
+        elif mode == 'pos':
+            pos_queries = self.pos_queries(pos)  # Assuming the same projection for pos as for queries
+            pos_keys = self.pos_keys(pos)
+            pos_scores = torch.einsum("nqhd,nkhd->nhqk", [pos_queries, pos_keys])
+            all_scores = attention_scores + pos_scores
+            energy = all_scores / math.sqrt(2)
+            
+        elif mode == 'all':
+            pos_queries = self.pos_queries(pos)  # Assuming the same projection for pos as for queries
+            pos_keys = self.pos_keys(pos)
+            pos_scores = torch.einsum("nqhd,nkhd->nhqk", [pos_queries, pos_keys])
+            
+            # Transform the rel tensor
+            rel_keys = self.rel_keys(rel)
+            rel_queries = self.rel_queries(rel)
+
+            # Calculate the rel scores
+            rel_scores_1 = torch.einsum("bqhd,bqkhd->bhqk", [queries, rel_keys])
+            rel_scores_2 = torch.einsum("bqkhd,bkhd->bhqk", [rel_queries, keys])
+            
+            all_scores = attention_scores + pos_scores + rel_scores_1 + rel_scores_2
+            energy = all_scores / math.sqrt(2)
+
         if mask is not None:
-            attn_scores = attn_scores.masked_fill(mask == 0, -1e9)
-        attn_probs = torch.softmax(attn_scores, dim=-1)
-        output = torch.matmul(attn_probs, V)
-        return output
-        
-    def split_heads(self, x):
-        batch_size, seq_length, d_model = x.size()
-        return x.view(batch_size, seq_length, self.num_heads, self.d_k).transpose(1, 2)
-        
-    def combine_heads(self, x):
-        batch_size, _, seq_length, d_k = x.size()
-        return x.transpose(1, 2).contiguous().view(batch_size, seq_length, self.d_model)
-        
-    def forward(self, Q, K, V, mask=None):
-        Q = self.split_heads(self.W_q(Q))
-        K = self.split_heads(self.W_k(K))
-        V = self.split_heads(self.W_v(V))
-        
-        attn_output = self.scaled_dot_product_attention(Q, K, V, mask)
-        output = self.W_o(self.combine_heads(attn_output))
-        return output
+            mask = mask.unsqueeze(1).unsqueeze(1)  # Reshape mask to [N, 1, 1, seq_len]
+            mask_temp = 1.0 - mask
+            mask_temp2 = mask_temp * -1e9  # Transform the mask
+            energy = energy + mask_temp2  # Apply mask to energy
 
-# needs modify
+        attention = torch.softmax(energy, dim=3)
+
+        out = torch.einsum("nhql,nlhd->nqhd", [attention, values]).reshape(N, query_len, self.heads * self.head_dim)
+        out = self.fc_out(out)
+        return out
+
+class TransformerBlock(nn.Module):
+    def __init__(self, embed_size, heads, dropout, forward_expansion):
+        super(TransformerBlock, self).__init__()
+        self.attention = MultiHeadAttention(embed_size, heads)
+        self.norm1 = nn.LayerNorm(embed_size)
+        self.norm2 = nn.LayerNorm(embed_size)
+
+        self.feed_forward = nn.Sequential(
+            nn.Linear(embed_size, forward_expansion * embed_size),
+            nn.ReLU(),
+            nn.Linear(forward_expansion * embed_size, embed_size),
+        )
+
+        self.dropout = nn.Dropout(dropout)
+
+    def forward(self, value, key, query, pos, rel, mask, mode):
+        attention = self.attention(value, key, query, pos, rel, mask, mode)
+
+        # Add skip connection, run through normalization and finally dropout
+        temp = attention + query
+        x = self.dropout(self.norm1(temp))
+        forward = self.feed_forward(x)
+        temp2 = forward + x
+        out = self.dropout(self.norm2(temp2))
+        return out
+
 class PositionalEncoding(nn.Module):
-    def __init__(self, d_model, max_seq_length):
+    def __init__(self, embed_size, max_len=5000):
         super(PositionalEncoding, self).__init__()
-        
-        pe = torch.zeros(max_seq_length, d_model)
-        position = torch.arange(0, max_seq_length, dtype=torch.float).unsqueeze(1)
-        div_term = torch.exp(torch.arange(0, d_model, 2).float() * -(math.log(10000.0) / d_model))
-        
-        pe[:, 0::2] = torch.sin(position * div_term)
-        pe[:, 1::2] = torch.cos(position * div_term)
-        
-        self.register_buffer('pe', pe.unsqueeze(0))
-        
-    def forward(self, x):
-        return x + self.pe[:, :x.size(1)]
-    
-class PositionWiseFeedForward(nn.Module):
-    def __init__(self, d_model, d_ff):
-        super(PositionWiseFeedForward, self).__init__()
-        self.fc1 = nn.Linear(d_model, d_ff)
-        self.fc2 = nn.Linear(d_ff, d_model)
-        self.relu = nn.ReLU()
+        self.embed_size = embed_size
+
+        # Create a long enough 'pe' matrix that can be sliced according to max_len
+        pe = torch.zeros(max_len, embed_size)
+        for pos in range(max_len):
+            for i in range(0, embed_size, 2):
+                pe[pos, i] = math.sin(pos / (10000 ** ((2 * i)/embed_size)))
+                pe[pos, i + 1] = math.cos(pos / (10000 ** ((2 * (i + 1))/embed_size)))
+
+        pe = pe.unsqueeze(0)  # Add batch dimension
+        self.register_buffer('pe', pe)
 
     def forward(self, x):
-        return self.fc2(self.relu(self.fc1(x)))
+        # Make the positional encoding as long as the input sequence
+        x = x + self.pe[:, :x.size(1)].detach()
+        return x
+
+class CustomTransformerModel(nn.Module):
+    def __init__(self, feature_dim, global_dim, embed_size, num_classes, num_heads, num_layers, 
+                 dropout, forward_expansion, max_len, mode):
+        super().__init__()
+        self.mode = mode
+        self.feature_to_embedding = nn.Linear(feature_dim, embed_size)
+        self.global_to_embedding = nn.Linear(global_dim, embed_size)
+        self.local_to_embedding = nn.Linear(global_dim, embed_size)
+        self.positional_encoding = PositionalEncoding(embed_size, max_len)
+        self.layers = nn.ModuleList(
+            [TransformerBlock(embed_size, num_heads, dropout, forward_expansion) for _ in range(num_layers)]
+        )
+        self.fc_out = nn.Linear(embed_size, num_classes)
+        self.prob_out = nn.Linear(embed_size, 8)
+
+    def forward(self, x, pos, rel, mask):
+        out = self.feature_to_embedding(x)
+        #out = self.positional_encoding(out)
+        pos_emb = self.global_to_embedding(pos)
+        rel_emb = self.local_to_embedding(rel)
+        for layer in self.layers:
+            out = layer(out, out, out, pos_emb, rel_emb, mask, self.mode)
+        edge_prob = self.prob_out(out)
+        #prob_out = F.softmax(edge_prob, dim=-1) 
+        return self.fc_out(out), out
     
-class EncoderLayer(nn.Module):
-    def __init__(self, d_model, num_heads, d_ff, dropout):
-        super(EncoderLayer, self).__init__()
-        self.self_attn = MultiHeadAttention(d_model, num_heads)
-        self.feed_forward = PositionWiseFeedForward(d_model, d_ff)
-        self.norm1 = nn.LayerNorm(d_model)
-        self.norm2 = nn.LayerNorm(d_model)
-        self.dropout = nn.Dropout(dropout)
+class StratModel(nn.Module):
+    def __init__(self, embed_size):
+        super().__init__()
+        self.prob_out = nn.Linear(embed_size, 8)
+
+    def forward(self, out):
+        edge_prob = self.prob_out(out)
+        prob_out = F.softmax(edge_prob, dim=-1) 
+        return prob_out
+
+
         
-    def forward(self, x, mask):
-        attn_output = self.self_attn(x, x, x, mask)
-        x = self.norm1(x + self.dropout(attn_output))
-        ff_output = self.feed_forward(x)
-        x = self.norm2(x + self.dropout(ff_output))
-        return x
-
-class DecoderLayer(nn.Module):
-    def __init__(self, d_model, num_heads, d_ff, dropout):
-        super(DecoderLayer, self).__init__()
-        self.self_attn = MultiHeadAttention(d_model, num_heads)
-        self.cross_attn = MultiHeadAttention(d_model, num_heads)
-        self.feed_forward = PositionWiseFeedForward(d_model, d_ff)
-        self.norm1 = nn.LayerNorm(d_model)
-        self.norm2 = nn.LayerNorm(d_model)
-        self.norm3 = nn.LayerNorm(d_model)
-        self.dropout = nn.Dropout(dropout)
-        
-    def forward(self, x, enc_output, src_mask, tgt_mask):
-        attn_output = self.self_attn(x, x, x, tgt_mask)
-        x = self.norm1(x + self.dropout(attn_output))
-        attn_output = self.cross_attn(x, enc_output, enc_output, src_mask)
-        x = self.norm2(x + self.dropout(attn_output))
-        ff_output = self.feed_forward(x)
-        x = self.norm3(x + self.dropout(ff_output))
-        return x
-
-class TransformerModel(nn.Module):
-    def __init__(self, src_vocab_size, tgt_vocab_size, d_model, num_heads, num_layers, d_ff, max_seq_length, dropout):
-        super(TransformerModel, self).__init__()
-        self.encoder_embedding = nn.Embedding(src_vocab_size, d_model)
-        self.decoder_embedding = nn.Embedding(tgt_vocab_size, d_model)
-        self.positional_encoding = PositionalEncoding(d_model, max_seq_length)
-
-        self.encoder_layers = nn.ModuleList([EncoderLayer(d_model, num_heads, d_ff, dropout) for _ in range(num_layers)])
-        self.decoder_layers = nn.ModuleList([DecoderLayer(d_model, num_heads, d_ff, dropout) for _ in range(num_layers)])
-
-        self.fc = nn.Linear(d_model, tgt_vocab_size)
-        self.fc2 = nn.Linear(d_model, 3)
-        self.dropout = nn.Dropout(dropout)
-
-    def generate_mask(self, src, tgt):
-        src_mask = (src != 0).unsqueeze(1).unsqueeze(2)
-        tgt_mask = (tgt != 0).unsqueeze(1).unsqueeze(3)
-        seq_length = tgt.size(1)
-        nopeak_mask = (1 - torch.triu(torch.ones(1, seq_length, seq_length), diagonal=1)).bool()
-        tgt_mask = tgt_mask & nopeak_mask
-        return src_mask, tgt_mask
-
-    def forward(self, src, tgt):
-        src_mask, tgt_mask = self.generate_mask(src, tgt)
-        src_embedded = self.dropout(self.positional_encoding(self.encoder_embedding(src)))
-        #tgt_embedded = self.dropout(self.positional_encoding(self.decoder_embedding(tgt)))
-
-        enc_output = src_embedded
-        for enc_layer in self.encoder_layers:
-            enc_output = enc_layer(enc_output, src_mask)
-
-        """dec_output = tgt_embedded
-        for dec_layer in self.decoder_layers:
-            dec_output = dec_layer(dec_output, enc_output, src_mask, tgt_mask)
-
-        output = self.fc(dec_output)"""
-        #print(enc_output.shape)
-        output = self.fc2(torch.mean(enc_output, -2))
-        return output
