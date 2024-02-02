@@ -11,7 +11,7 @@ from torch.optim import Adam
 from transformers import BertTokenizer, BertForSequenceClassification, AdamW, BertModel
 
 journalist = 'sallykohn'
-data_dir = '.'
+data_dir = '../data'
 
 def map_ids(u):
     map_id = {}
@@ -256,20 +256,24 @@ if __name__=='__main__':
         for line in f:
             users.append(json.loads(line))
             
-    df = pd.read_csv(os.path.join(data_dir, f'{journalist}/{journalist}_conv.csv'))
-    lab = list(df['label'])
+    df = pd.read_csv(os.path.join(data_dir, f'{journalist}/{journalist}_context.csv'))
+    lab = list(df['labels'])
+    
     count = 0
     for i in range(len(lab)):
-        if lab[i] == '-1' or lab[i] == '0' or lab[i] == '1' or lab[i] == -1 or lab[i] == 1 or lab[i] ==0:
+        #if lab[i] == '-1' or lab[i] == '0' or lab[i] == '1' or lab[i] == -1 or lab[i] == 1 or lab[i] ==0:
+        if lab[i] == 0 or lab[i] == 1 or lab[i] ==2:
             count += 1
         else: break
+
     label_real = lab[:count]
     if type(label_real[0]) == str:
+        print("yes")
         labels = {'-1': 0, '0': 1, '1': 2, np.nan: 9000}
     else:
-        labels = {-1.0: 0, 0.0: 1, 1.0: 2, np.nan: 9000}
-    
+        labels = {0.0: 0, 1.0: 1, 2.0: 2, np.nan: 9000}
     label = [labels[l] for l in label_real]
+
     print(torch.cuda.is_available())
 
     map_id = map_ids(users[0])
@@ -287,6 +291,7 @@ if __name__=='__main__':
     labeled_text = user_text.dropna(subset=['labels']).reset_index(drop=True)  # Assuming rows with missing labels are NaN
     unlabeled_text = user_text[user_text['labels'].isna()].reset_index(drop=True)
 
+    
     #labeled_df = labeled_text.reset_index(drop=True)
     #unlabeled_df = unlabeled_df.reset_index(drop=True)
     labeled, unlabeled = BertModel(labeled_text, unlabeled_text)

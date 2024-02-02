@@ -29,6 +29,8 @@ import sys
 import pickle as pkl
 import sklearn
 from tqdm import tqdm
+from sklearn.metrics import roc_auc_score
+from sklearn.preprocessing import label_binarize
 import json
 
 from sklearn.mixture import GaussianMixture
@@ -49,15 +51,19 @@ def load_data(data_dir, journalist, classes, batch_size, collate):
     dp = []
     rel = []
     
-    split = [8, 12]
+    split = [8, 99]
+    # JiayangFan: 8: 84
     val = 0
     journal_sort = pd.read_csv((os.path.join(data_dir, f'{journalist}/{journalist}_conv_labels.csv')))
-    ids = list(set(journal_sort['conversation_id']))
+    ids = []
+    for item in list(journal_sort['conversation_id']):
+        if item not in ids:
+            ids.append(item)
     id_pair = {}
     id_conv = {}
     for idx in ids:
         id_pair[idx], id_conv[idx] = create_conversation_list(journal_sort[journal_sort['conversation_id']==idx], idx)
-    id_data, data, label = create_data(journal_sort, ids)
+    id_data, uid, data, label = create_data(journal_sort, ids)
     prob = pkl.load(open(os.path.join(data_dir, f'{journalist}/{journalist}_edgeprob.pkl'), 'rb'))
     
     with open(os.path.join(data_dir, f'{journalist}/{journalist}_global_path.txt'), "r") as f:
@@ -82,15 +88,26 @@ def load_data(data_dir, journalist, classes, batch_size, collate):
     #num_sequences += len(data[split]['arrival_times'])
     num_sequences = len(set(journal_sort['conversation_id']))
     
-    X_train, X_dev, X_test = data[:split[0]], data[split[0]:split[1]], data[split[1]:]
-    prob_train, prob_dev, prob_test = prob[:split[0]], prob[split[0]:split[1]], prob[split[1]:]
-    global_train, global_dev, global_test = global_input[:split[0]], global_input[split[0]:split[1]], global_input[split[1]:]
-    local_train, local_dev, local_test = local_input[:split[0]], local_input[split[0]:split[1]], local_input[split[1]:]
-    label_train, label_dev, label_test = label[:split[0]], label[split[0]:split[1]], label[split[1]:]
+    # id_train, id_dev, id_test = id_data[:split[0]], id_data[split[0]:split[1]], id_data[split[1]:]
+    # uid_train, uid_dev, uid_test = uid[:split[0]], uid[split[0]:split[1]], uid[split[1]:]
+    # X_train, X_dev, X_test = data[:split[0]], data[split[0]:split[1]], data[split[1]:]
+    # prob_train, prob_dev, prob_test = prob[:split[0]], prob[split[0]:split[1]], prob[split[1]:]
+    # global_train, global_dev, global_test = global_input[:split[0]], global_input[split[0]:split[1]], global_input[split[1]:]
+    # local_train, local_dev, local_test = local_input[:split[0]], local_input[split[0]:split[1]], local_input[split[1]:]
+    # label_train, label_dev, label_test = label[:split[0]], label[split[0]:split[1]], label[split[1]:]
 
-    d_train = TreeDataset(X_train, prob_train, global_train, local_train, label_train)
-    d_val = TreeDataset(X_dev, prob_dev, global_dev, local_dev, label_dev)  
-    d_test  = TreeDataset(X_test, prob_test, global_test, local_test, label_test)   
+    id_train, id_dev, id_test = id_data[split[0]:split[1]], id_data[:split[0]], id_data[split[1]:]
+    uid_train, uid_dev, uid_test = uid[split[0]:split[1]], uid[:split[0]], uid[split[1]:]
+    X_train, X_dev, X_test = data[split[0]:split[1]], data[:split[0]], data[split[1]:]
+    prob_train, prob_dev, prob_test = prob[split[0]:split[1]], prob[:split[0]], prob[split[1]:]
+    global_train, global_dev, global_test = global_input[split[0]:split[1]], global_input[:split[0]], global_input[split[1]:]
+    local_train, local_dev, local_test = local_input[split[0]:split[1]], local_input[:split[0]], local_input[split[1]:]
+    label_train, label_dev, label_test = label[split[0]:split[1]], label[:split[0]], label[split[1]:]
+
+
+    d_train = TreeDataset(id_train, uid_train, X_train, prob_train, global_train, local_train, label_train)
+    d_val = TreeDataset(id_dev, uid_dev, X_dev, prob_dev, global_dev, local_dev, label_dev)  
+    d_test  = TreeDataset(id_test, uid_test, X_test, prob_test, global_test, local_test, label_test)   
 
     # for padding input sequences to maxlen of batch for running on gpu, and arranging them by length efficient
     collate = collate  
@@ -221,8 +238,11 @@ def train(model, opt, strat_model, strat_opt, dl_train, dl_val, logging, max_epo
     use_strat = args.use_strat
     for epoch in range(args.max_epochs):  # Number of epochs
         pred_tr = []
+        predict_tr = []
         true_tr = []
         prob_tr = []
+        strat_tr = []
+        output_tr = []
         for item in dl_train:
             # Forward pass
             data = item.data.float().to(args.device)
@@ -231,22 +251,36 @@ def train(model, opt, strat_model, strat_opt, dl_train, dl_val, logging, max_epo
             prob = item.prob.float().to(args.device)
             targets = item.labels.long().to(args.device)
             mask = item.masks.float().to(args.device)
+            mask_bool = mask.bool()
             
-            output, p_output = model(data, dp, rel, mask)
+            output, p_output, c_output = model(data, dp, rel, mask)
+            #output, p_output = model(data, dp, rel, mask)
             prob_tr.append(p_output)
-            prob_output = strat_model(p_output.detach())
+            prob_output = strat_model(p_output.detach(), c_output.detach())
+            #print(data.size, prob_output.size(), prob.size())
             _, predicted = torch.max(output.data, 2)
-            pred_tr.extend(predicted.view(-1).tolist())
-            true_tr.extend(targets.view(-1).tolist())
+            output_tr.append(p_output.tolist())
+            # get strategy distributions
+            strat_tr.append(prob_output.tolist())
+            predict_tr.append(predicted.tolist())
+            pred_tr.extend(predicted[mask_bool].view(-1).tolist())
+            true_tr.extend(targets[mask_bool].view(-1).tolist())
             correct_tr = sum(p == t for p, t in zip(pred_tr, true_tr))
             acc_tr = correct_tr / len(true_tr)
-            loss = criterion(output.view(-1, args.num_classes), targets.view(-1))
+            f1_tr = sklearn.metrics.f1_score(true_tr, pred_tr, average='weighted')
+            recall_tr = sklearn.metrics.recall_score(true_tr, pred_tr, average='weighted')
+            y_true_binarized = label_binarize(true_tr, classes=range(args.num_classes))
+            #print(y_true_binarized.size(), output[mask_bool].view(-1, 3).size())
+            #print(y_true_binarized, output[mask_bool].view(-1, 3))
+            #auc_tr = roc_auc_score(y_true_binarized, output[mask_bool].view(-1, 3).cpu().detach().numpy(), multi_class='ovr')
+            #print(output[mask_bool].view(-1, args.num_classes), targets[mask_bool].view(-1))
+            loss = criterion(output[mask_bool].view(-1, args.num_classes), targets[mask_bool].view(-1))
             
             # Apply the padding mask
-            loss = loss * mask
+            #loss = loss * mask
             
             # Compute the mean loss, considering only non-padded elements
-            loss = loss.sum() / mask.sum()
+            # loss = loss.sum() / mask.sum()
 
             # Backward and optimize
             opt.zero_grad()
@@ -275,17 +309,28 @@ def train(model, opt, strat_model, strat_opt, dl_train, dl_val, logging, max_epo
             
         if loss.item() < min_loss:
             min_loss = loss.item()
-            print(f"Epoch [{epoch+1}/10], New Min Loss: {min_loss}, New Strategy Loss: {total_loss}, Acc: {acc_tr}")
+            print(f"Epoch [{epoch+1}/10], New Min Loss: {min_loss}, New Strategy Loss: {total_loss}")
+            print(f"Acc: {acc_tr}, F1: {f1_tr}, Recall: {recall_tr}")
             # Save the model state
+            best_strat = strat_tr
+            with open(os.path.join(args.out_dir, f'{args.journalist}/strat_tr.pkl'), 'wb') as file:
+                pickle.dump(best_strat, file)
+
+            with open(os.path.join(args.out_dir, f'{args.journalist}/output.pkl'), 'wb') as file:
+                pickle.dump(output_tr, file)
+
+            with open(os.path.join(args.out_dir, f'{args.journalist}/pred_tr.pkl'), 'wb') as file:
+                pickle.dump(predict_tr, file)
+
             torch.save(model.state_dict(), os.path.join(args.out_dir, best_model_path))
             torch.save(strat_model.state_dict(), os.path.join(args.out_dir, best_strat_model_path))
-            evaluate(model, dl_val, args.device)
+            #predictions, strat_li, true_labels = evaluate(model, strat_model, dl_val, args.device)
             
 
     logging.info('Training finished.............')
-    model.load_state_dict(torch.load(os.path.join(args.out_dir, best_model_path)))
-    strat_model.load_state_dict(torch.load(os.path.join(args.out_dir, best_strat_model_path)))
-    torch.save(model, os.path.join(args.out_dir, best_model_path))
+    #model.load_state_dict(torch.load(os.path.join(args.out_dir, best_model_path)))
+    #strat_model.load_state_dict(torch.load(os.path.join(args.out_dir, best_strat_model_path)))
+    #torch.save(model, os.path.join(args.out_dir, best_model_path))
     logging.info(f"The entire model is saved in {os.path.join(args.out_dir, best_model_path)}.")    
     # loading model model = torch.load(save_model_path)
     
@@ -305,38 +350,101 @@ def train(model, opt, strat_model, strat_opt, dl_train, dl_val, logging, max_epo
     # plt.savefig(os.path.join(out_dir, 'training_curve.png'))
     
 
-def evaluate(model, dl_test, device):
-        # Calculate the train/val/test loss, plot training curve
-        model.eval()
-        strat_model.eval()
-        with torch.no_grad():
-            test_loss = 0
-            test_steps = 0
-            predictions = []
-            true_labels = []
-            strat_li = []
-            for item in tqdm(dl_test):  # Assuming 'val' is your validation dataset
-                # Forward pass
-                data = item.data.float().to(device)
-                dp = item.global_path.float().to(device)
-                rel = item.local_path.float().to(device)
-                targets = item.labels.long().to(device)
-                mask = item.masks.float().to(device)
+def evaluate(model, strat_model, dl_test, device):
+    # Calculate the train/val/test loss, plot training curve
+    model.eval()
+    strat_model.eval()
+    with torch.no_grad():
+        test_loss = 0
+        test_steps = 0
+        predictions = []
+        true_labels = []
+        strat_val = []
+        pred_val = []
+        output_val = []
+        for item in tqdm(dl_test):  # Assuming 'val' is your validation dataset
+            # Forward pass
+            data = item.data.float().to(device)
+            dp = item.global_path.float().to(device)
+            rel = item.local_path.float().to(device)
+            targets = item.labels.long().to(device)
+            mask = item.masks.float().to(device)
+            mask_bool = mask.bool()
 
-                output, p_output = model(data, dp, rel, mask)
-                prob_output = strat_model(p_output.detach())
-                strat_li.append(prob_output)
-                _, predicted = torch.max(output.data, 2)
-                predictions.extend(predicted.view(-1).tolist())
-                true_labels.extend(targets.view(-1).tolist())
+            output, p_output, c_output = model(data, dp, rel, mask)
+            #output, p_output = model(data, dp, rel, mask)
+            prob_output = strat_model(p_output.detach(), c_output.detach())
+            strat_val.append(prob_output.tolist())
+            output_val.append(p_output.tolist())
+            _, predicted = torch.max(output.data, 2)
+            pred_val.append(predicted.tolist())
 
-            correct_predictions = sum(p == t for p, t in zip(predictions, true_labels))
-            accuracy = correct_predictions / len(true_labels)
-            print(f'Test Accuracy: {accuracy:.4f}')
-            #logging.info(f'{dl_name}: {loss_tot:.4f}')
-            logging.info(f'Test Accuracy: {accuracy:.4f}')
-        return predictions, strat_li, true_labels
+            #print(mask_bool, predicted.size(), targets.size())
+            #print(predicted, targets)
 
+            predictions.extend(predicted[mask_bool].view(-1).tolist())
+            true_labels.extend(targets[mask_bool].view(-1).tolist())
+
+        correct_predictions = sum(p == t for p, t in zip(predictions, true_labels))
+        accuracy = correct_predictions / len(true_labels)
+        f1_te = sklearn.metrics.f1_score(true_labels, predictions, average='weighted')
+        recall_te = sklearn.metrics.recall_score(true_labels, predictions, average='weighted')
+        y_true_binarized = label_binarize(true_labels, classes=range(args.num_classes))
+        #print(y_true_binarized.size(), output[mask_bool].view(-1, 3).size())
+        #print(y_true_binarized, output[mask_bool].view(-1, 3))
+        #auc_te = roc_auc_score(y_true_binarized, output[mask_bool].view(-1, 3).cpu().detach().numpy(), multi_class='ovr')
+
+        print(f'Test Accuracy: {accuracy:.4f}')
+        #logging.info(f'{dl_name}: {loss_tot:.4f}')
+        logging.info(f'Test Accuracy: {accuracy:.4f}, F1: {f1_te}, Recall: {recall_te}')
+    return pred_val, strat_val, output_val, true_labels, predictions
+
+def test(model, strat_model, dl_test, device):
+    # Calculate the train/val/test loss, plot training curve
+    model.eval()
+    strat_model.eval()
+    with torch.no_grad():
+        test_loss = 0
+        test_steps = 0
+        predictions = []
+        true_labels = []
+        strat_li = []
+        predicted_li = []
+        for item in tqdm(dl_test):  # Assuming 'val' is your validation dataset
+            # Forward pass
+            data = item.data.float().to(device)
+            dp = item.global_path.float().to(device)
+            rel = item.local_path.float().to(device)
+            targets = item.labels.long().to(device)
+            mask = item.masks.float().to(device)
+            mask_bool = mask.bool()
+
+            output, p_output, c_output = model(data, dp, rel, mask)
+            #output, p_output = model(data, dp, rel, mask)
+            prob_output = strat_model(p_output.detach(), c_output.detach())
+            strat_li.append(prob_output.tolist())
+            _, predicted = torch.max(output.data, 2)
+            predicted_li.append(predicted.tolist())
+
+            #print(mask_bool, predicted.size(), targets.size())
+            #print(predicted, targets)
+
+            predictions.extend(predicted[mask_bool].view(-1).tolist())
+            #true_labels.extend(targets[mask_bool].view(-1).tolist())
+
+        #correct_predictions = sum(p == t for p, t in zip(predictions, true_labels))
+        #accuracy = correct_predictions / len(true_labels)
+        #f1_te = sklearn.metrics.f1_score(true_labels, predictions, average='weighted')
+        #recall_te = sklearn.metrics.recall_score(true_labels, predictions, average='weighted')
+        #y_true_binarized = label_binarize(true_labels, classes=range(args.num_classes))
+        #print(y_true_binarized.size(), output[mask_bool].view(-1, 3).size())
+        #print(y_true_binarized, output[mask_bool].view(-1, 3))
+        #auc_te = roc_auc_score(y_true_binarized, output[mask_bool].view(-1, 3).cpu().detach().numpy(), multi_class='ovr')
+
+        #print(f'Test Accuracy: {accuracy:.4f}')
+        #logging.info(f'{dl_name}: {loss_tot:.4f}')
+        #logging.info(f'Test Accuracy: {accuracy:.4f}, F1: {f1_te}, Recall: {recall_te}')
+    return predicted_li, strat_li, predictions
 
 
 
@@ -348,7 +456,7 @@ if __name__=='__main__':
     parser.add_argument('--data_dir', type=str, default='../data')
     parser.add_argument('--out_dir', type=str, default='../data')
     parser.add_argument('--log_filename', type=str, default='run.log')
-    parser.add_argument('--journalist', type=str, default='sallykohn')
+    parser.add_argument('--journalist', type=str, default='Lingling_Wei')
     parser.add_argument('--classes', type=int, default=3)
     parser.add_argument('--best_model_path', type=str, default='best_model.pth')
     parser.add_argument('--best_strat_model_path', type=str, default='best_strat_model.pth')
@@ -360,29 +468,28 @@ if __name__=='__main__':
     parser.add_argument('--num_heads', type=int, default=8)
     parser.add_argument('--num_classes', type=int, default=3)
     parser.add_argument('--forward_expansion', type=int, default=4)
-    parser.add_argument('--mode', type=str, default='all')
+    parser.add_argument('--mode', type=str, default='all', help='pos or rel or only')
     parser.add_argument('--depth', type=int, default=1)
     parser.add_argument('--wide', dest='wide', default=True, action='store_true', help='Change back')
     parser.add_argument('--num_layers', type=int, default=3, help='flow-based models.')
     parser.add_argument('--d_ff', type=int, default=None)
     parser.add_argument('--max_len', type=int, default=2000)
     parser.add_argument('--dropout', type=float, default=0.1)
-    parser.add_argument('--attn', type=str, default='all', help='dp or rel or only')
 
     
     
     ## training arguments
     parser.add_argument('--seed', type=int, default=42)
     parser.add_argument('--device', type=str, default='cuda')
-    parser.add_argument('--regularization', type=float, default=1e-5)
-    parser.add_argument('--learning_rate', type=float, default=1e-3)
-    parser.add_argument('--max_epochs', type=int, default=10)  # 1000 
+    parser.add_argument('--regularization', type=float, default=1e-2)
+    parser.add_argument('--learning_rate', type=float, default=0.0001)
+    parser.add_argument('--max_epochs', type=int, default=1000)  # 1000 
     parser.add_argument('--max_loop', type=int, default=1)
     parser.add_argument('--patience', type=int, default=2)
     parser.add_argument('--save_freq', type=int, default=1)
     parser.add_argument('--display_step', type=int, default=1)
-    parser.add_argument('--batch_size', type=int, default=5)
-    parser.add_argument('--use_strat', type=bool, default=True)
+    parser.add_argument('--batch_size', type=int, default=4)
+    parser.add_argument('--use_strat', type=bool, default=False)
     
     
     args = parser.parse_args()
@@ -414,14 +521,35 @@ if __name__=='__main__':
 
     dl_list = dl_val #[dl_train, dl_val, dl_test]
     dl_names = ['Train', 'Val', 'Test']
-    evaluate(model, dl_test, args.device)
 
+    # evaluate
     best_model_path = os.path.join(f'{args.journalist}/best_model_w_strat.pth') 
     best_strat_model_path = os.path.join(f'{args.journalist}/best_strat_model_w_strat.pth') 
 
-    model = torch.load(os.path.join(args.out_dir, best_model_path))
-    strat_model = torch.load(os.path.join(args.out_dir, best_strat_model_path))
+    model.load_state_dict(torch.load(os.path.join(args.out_dir, best_model_path)))
+    strat_model.load_state_dict(torch.load(os.path.join(args.out_dir, best_strat_model_path)))
+    pred_val, strat_val, output_val, true_labels, predictions = evaluate(model, strat_model, dl_val, args.device)
+    pred_te, strat_te, predictions_te = test(model, strat_model, dl_test, args.device)
+    with open(os.path.join(args.out_dir, f'{args.journalist}/pred_val.pkl'), 'wb') as file:
+        pickle.dump(pred_val, file)
+
+    with open(os.path.join(args.out_dir, f'{args.journalist}/strat_val.pkl'), 'wb') as file:
+        pickle.dump(strat_val, file)
+
+    with open(os.path.join(args.out_dir, f'{args.journalist}/output_val.pkl'), 'wb') as file:
+        pickle.dump(output_val, file)
+
+    with open(os.path.join(args.out_dir, f'{args.journalist}/true_labels.pkl'), 'wb') as file:
+        pickle.dump(true_labels, file)
+
+    with open(os.path.join(args.out_dir, f'{args.journalist}/predictions.pkl'), 'wb') as file:
+        pickle.dump(predictions, file)
     
-    # extract_features(model, logging, args, gmm)
-    # logging.info('Finished program.')
+    with open(os.path.join(args.out_dir, f'{args.journalist}/predictions_te.pkl'), 'wb') as file:
+        pickle.dump(predictions_te, file)
+
+    with open(os.path.join(args.out_dir, f'{args.journalist}/strat_te.pkl'), 'wb') as file:
+        pickle.dump(strat_te, file)
     
+    with open(os.path.join(args.out_dir, f'{args.journalist}/pred_te.pkl'), 'wb') as file:
+        pickle.dump(pred_te, file)

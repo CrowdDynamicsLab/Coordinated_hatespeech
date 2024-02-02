@@ -117,6 +117,7 @@ def create_data(journal_sort, ids):
     conv_data = []
     ref_data = []
     id_data = []
+    uid = []
     for idx in ids:
         convs = journal_sort[journal_sort['conversation_id'] == idx]
         convs_batch = convs[['type', 'possibly_sensitive', 'lang', 'reply_settings', 
@@ -126,11 +127,12 @@ def create_data(journal_sort, ids):
         conv_data.append(convs_batch.to_numpy().tolist())
         ref_data.append(list(convs['reference_id']))
         id_data.append(list(convs['tweet_id']))
+        uid.append(list(convs['user_id']))
         batch_data.append(convs_batch.values.tolist())
         target_data.append(list(convs['labels']))
     
     label_data = target_data
-    return id_data, conv_data, label_data
+    return id_data, uid, conv_data, label_data
 
 def create_mat(local_mat, mat_type):
     result = []

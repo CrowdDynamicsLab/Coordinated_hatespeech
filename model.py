@@ -125,7 +125,7 @@ class TransformerBlock(nn.Module):
         return out
 
 class PositionalEncoding(nn.Module):
-    def __init__(self, embed_size, max_len=5000):
+    def __init__(self, embed_size, max_len=500):
         super(PositionalEncoding, self).__init__()
         self.embed_size = embed_size
 
@@ -156,7 +156,8 @@ class CustomTransformerModel(nn.Module):
         self.layers = nn.ModuleList(
             [TransformerBlock(embed_size, num_heads, dropout, forward_expansion) for _ in range(num_layers)]
         )
-        self.fc_out = nn.Linear(embed_size, num_classes)
+        self.linear1 = nn.Linear(embed_size, embed_size)
+        self.linear2 = nn.Linear(embed_size, num_classes)
         self.prob_out = nn.Linear(embed_size, 8)
 
     def forward(self, x, pos, rel, mask):
@@ -166,17 +167,24 @@ class CustomTransformerModel(nn.Module):
         rel_emb = self.local_to_embedding(rel)
         for layer in self.layers:
             out = layer(out, out, out, pos_emb, rel_emb, mask, self.mode)
-        edge_prob = self.prob_out(out)
+        # probability
+        output_to_strat = self.linear1(out)
+
+        #class_result = F.softmax(self.linear2(output_to_strat), dim=-1)
+        class_result = F.softmax(self.linear2(output_to_strat), dim=-1)
+        # class
+        # result = self.fc_out(out)
         #prob_out = F.softmax(edge_prob, dim=-1) 
-        return self.fc_out(out), out
+        return class_result, out, output_to_strat
     
 class StratModel(nn.Module):
     def __init__(self, embed_size):
         super().__init__()
         self.prob_out = nn.Linear(embed_size, 8)
 
-    def forward(self, out):
-        edge_prob = self.prob_out(out)
+    def forward(self, s_input, c_input):
+        edge_prob = self.prob_out(s_input+c_input)
+        #prob_out = edge_prob
         prob_out = F.softmax(edge_prob, dim=-1) 
         return prob_out
 

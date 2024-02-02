@@ -129,7 +129,11 @@ def get_time(df):
     anchor_time = []
     # date_format = "%Y-%m-%dT%H:%M:%S" 
     date_format = '%Y-%m-%d %H:%M:%S'
-    conv_ids = list(set(df['conversation_id']))
+    #conv_ids = list(set(df['conversation_id']))
+    conv_ids = []
+    for item in list(df['conversation_id']):
+        if item not in conv_ids:
+            conv_ids.append(item)
     max_len = 0
     max_id = 0
     for item in conv_ids:
@@ -154,7 +158,7 @@ def get_time(df):
             conv_id = item['conversation_id']
             time1 = datetime.strptime(item['created_at'][:19], date_format)
             if len(test_d) == 1:
-                journal_sort.at[index, 'time gap']= float(anchor_hours) / 120
+                df.at[index, 'time gap']= float(anchor_hours) / 120
                 continue
             if ref_id not in ref_ids:
                 if tweet_id == test_d.iloc[0]['tweet_id']:
@@ -162,8 +166,11 @@ def get_time(df):
                 else:
                     time2 = datetime.strptime(test_d.iloc[k-1]['created_at'][:19], date_format)
             else:
-                #print(test_d[test_d['tweet_id']==ref_id]['created_at'][:19].item())
-                time2 = datetime.strptime(test_d[test_d['tweet_id']==ref_id]['created_at'].item()[:19], date_format)
+                if test_d[test_d['tweet_id']==ref_id]['context'].empty:
+                    time2 = datetime.strptime(test_d.iloc[k-1]['created_at'][:19], date_format)
+                else:
+                    #print(test_d[test_d['tweet_id']==ref_id]['created_at'][:19].item())
+                    time2 = datetime.strptime(test_d[test_d['tweet_id']==ref_id]['created_at'].item()[:19], date_format)
 
             ref_ids.append(tweet_id)
             gap_in_s = (time1 - time2).total_seconds() 
@@ -197,27 +204,31 @@ def cal_cite_edgeprobs(df):
     return np.array(edge_prob, dtype=np.float32)
 
 if __name__=='__main__':
-    out_dir = '.'
-    journalist = 'sallykohn'
+    out_dir = '../data'
+    journalist = 'Lingling_Wei'
     conv = pd.read_csv(os.path.join(out_dir, f'{journalist}/{journalist}_conv_labels.csv'))
-
+    
     journal = conv
     contexts = get_context(conv)
     annotations = get_anno(conv)
 
     journal['context'] = contexts
     journal['annotations'] = annotations
-    journal_sort = journal.sort_values(by=['created_at'])
-
+    #journal_sort = journal.sort_values(by=['created_at'])
+    journal_sort = journal
     ref_ids = []
 
     journal_sort['topics'] = None
     journal_sort['ppls'] = None
     journal_sort['time gap'] = None
-    conv_ids = set(journal_sort['conversation_id'])
 
-    for conv in list(conv_ids):
-        test_d = journal_sort[journal_sort['conversation_id'] == conv]
+    ids = []
+    for item in list(journal_sort['conversation_id']):
+        if item not in ids:
+            ids.append(item)
+    
+    for idx in list(ids):
+        test_d = journal_sort[journal_sort['conversation_id'] == idx]
         for index, item in test_d.iterrows():
             i = 0
             tweet_id = item['tweet_id']
@@ -226,7 +237,7 @@ if __name__=='__main__':
             topic1 = item['context']
             anno1 = item['annotations']
             if len(test_d) == 1:
-                topic2 = 'Unified Twitter Taxonomy'
+                text2 = 'Unified Twitter Taxonomy'
                 anno2 = 'Others'
                 journal_sort.at[index, 'topics']=[topic1, text2]
                 journal_sort.at[index, 'ppls']=[anno1, anno2]
@@ -239,9 +250,14 @@ if __name__=='__main__':
                     text2 = test_d.iloc[i-1]['context']
                     anno2 = test_d.iloc[i-1]['annotations']
             else:
-                #print(tweet_id,ref_id)
-                text2 = test_d[test_d['tweet_id']==ref_id]['context'].item()
-                anno2 = test_d[test_d['tweet_id']==ref_id]['annotations'].item()
+                #if ref_id == 33402 and tweet_id == 33445:
+                if test_d[test_d['tweet_id']==ref_id]['context'].empty:
+                    text2 = 'Unified Twitter Taxonomy'
+                    anno2 = 'Others'
+                else:
+                    #print(index, tweet_id, ref_id, conv_id, test_d[test_d['tweet_id']==ref_id]['context'])
+                    text2 = test_d[test_d['tweet_id']==ref_id]['context'].item()
+                    anno2 = test_d[test_d['tweet_id']==ref_id]['annotations'].item()
 
             ref_ids.append(tweet_id)
             
@@ -251,9 +267,9 @@ if __name__=='__main__':
             i += 1
             
     context_sims = context_sim(journal_sort)
-    print("context finished")
+    print("context finished", len(context_sims))
     anno_sims = anno_sim(journal_sort)
-    print("annotations finished")
+    print("annotations finished", len(anno_sims))
 
     journal_sort['topics_sim'] = context_sims
     journal_sort['ppls_sim'] = anno_sims
@@ -265,9 +281,13 @@ if __name__=='__main__':
 
     journal_sort['sim'] = edge_prob.tolist()
     edgeprob = []
-    ids = list(set(journal_sort['conversation_id']))
+    ids = []
+    for item in list(journal_sort['conversation_id']):
+        if item not in ids:
+            ids.append(item)
     for idx in ids:
         df = journal_sort[journal_sort['conversation_id']==idx]
+        #print(len(df))
         edgeprob.append(list(df['sim']))
 
     with open(os.path.join(out_dir, f'{journalist}/{journalist}_edgeprob.pkl'),'wb') as f:
