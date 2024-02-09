@@ -32,6 +32,7 @@ from tqdm import tqdm
 from sklearn.metrics import roc_auc_score
 from sklearn.preprocessing import label_binarize
 import json
+from operator import itemgetter
 
 from sklearn.mixture import GaussianMixture
 from collections import Counter
@@ -42,6 +43,28 @@ from utils.utils import *
 from utils.tree_utils import *
 from model import *
 
+def get_set(set_list, indices, n):
+    # Split sizes
+    train_size = int(0.6 * n)
+    validation_size = int(0.4 * n)
+    test_size = n
+    # Split indices
+    train_indices = list(indices[:train_size])
+    dev_indices = list(indices[train_size:train_size+validation_size])
+    test_indices = list(indices[train_size:])
+
+    get_items_tr = itemgetter(*train_indices)  # Creates a callable for indexing
+    get_items_dev = itemgetter(*dev_indices)
+    get_items_te = itemgetter(*test_indices)
+    result_tr = list(get_items_tr(set_list))
+    result_dev = list(get_items_dev(set_list))
+    result_te = list(get_items_te(set_list))
+
+    result_train = result_tr if isinstance(result_tr, list) else [result_tr]
+    result_val = result_dev if isinstance(result_dev, list) else [result_dev]
+    result_test = result_te if isinstance(result_te, list) else [result_te]
+
+    return result_train, result_val, result_test
 
 def load_data(data_dir, journalist, classes, batch_size, collate):
     ### Data (normalize input inter-event times, then padding to create dataloaders)
@@ -51,8 +74,13 @@ def load_data(data_dir, journalist, classes, batch_size, collate):
     dp = []
     rel = []
     
-    split = [8, 99]
-    # JiayangFan: 8: 84
+    split = [100, 150]
+    # JiayangFan: 80, 84
+    # muyixiao: 12, 16
+    # lingling: 98, 99
+    # meifong: 100, 150
+    # marianna: 2: 10
+    # marianna: 689
     val = 0
     journal_sort = pd.read_csv((os.path.join(data_dir, f'{journalist}/{journalist}_conv_labels.csv')))
     ids = []
@@ -88,23 +116,33 @@ def load_data(data_dir, journalist, classes, batch_size, collate):
     #num_sequences += len(data[split]['arrival_times'])
     num_sequences = len(set(journal_sort['conversation_id']))
     
-    # id_train, id_dev, id_test = id_data[:split[0]], id_data[split[0]:split[1]], id_data[split[1]:]
-    # uid_train, uid_dev, uid_test = uid[:split[0]], uid[split[0]:split[1]], uid[split[1]:]
-    # X_train, X_dev, X_test = data[:split[0]], data[split[0]:split[1]], data[split[1]:]
-    # prob_train, prob_dev, prob_test = prob[:split[0]], prob[split[0]:split[1]], prob[split[1]:]
-    # global_train, global_dev, global_test = global_input[:split[0]], global_input[split[0]:split[1]], global_input[split[1]:]
-    # local_train, local_dev, local_test = local_input[:split[0]], local_input[split[0]:split[1]], local_input[split[1]:]
-    # label_train, label_dev, label_test = label[:split[0]], label[split[0]:split[1]], label[split[1]:]
+    id_train, id_dev, id_test = id_data[:split[0]], id_data[split[0]:split[1]], id_data[split[1]:]
+    uid_train, uid_dev, uid_test = uid[:split[0]], uid[split[0]:split[1]], uid[split[1]:]
+    X_train, X_dev, X_test = data[:split[0]], data[split[0]:split[1]], data[split[1]:]
+    prob_train, prob_dev, prob_test = prob[:split[0]], prob[split[0]:split[1]], prob[split[1]:]
+    global_train, global_dev, global_test = global_input[:split[0]], global_input[split[0]:split[1]], global_input[split[1]:]
+    local_train, local_dev, local_test = local_input[:split[0]], local_input[split[0]:split[1]], local_input[split[1]:]
+    label_train, label_dev, label_test = label[:split[0]], label[split[0]:split[1]], label[split[1]:]
 
-    id_train, id_dev, id_test = id_data[split[0]:split[1]], id_data[:split[0]], id_data[split[1]:]
-    uid_train, uid_dev, uid_test = uid[split[0]:split[1]], uid[:split[0]], uid[split[1]:]
-    X_train, X_dev, X_test = data[split[0]:split[1]], data[:split[0]], data[split[1]:]
-    prob_train, prob_dev, prob_test = prob[split[0]:split[1]], prob[:split[0]], prob[split[1]:]
-    global_train, global_dev, global_test = global_input[split[0]:split[1]], global_input[:split[0]], global_input[split[1]:]
-    local_train, local_dev, local_test = local_input[split[0]:split[1]], local_input[:split[0]], local_input[split[1]:]
-    label_train, label_dev, label_test = label[split[0]:split[1]], label[:split[0]], label[split[1]:]
+    # id_train, id_dev, id_test = id_data[split[0]:split[1]], id_data[:split[0]], id_data[split[1]:]
+    # uid_train, uid_dev, uid_test = uid[split[0]:split[1]], uid[:split[0]], uid[split[1]:]
+    # X_train, X_dev, X_test = data[split[0]:split[1]], data[:split[0]], data[split[1]:]
+    # prob_train, prob_dev, prob_test = prob[split[0]:split[1]], prob[:split[0]], prob[split[1]:]
+    # global_train, global_dev, global_test = global_input[split[0]:split[1]], global_input[:split[0]], global_input[split[1]:]
+    # local_train, local_dev, local_test = local_input[split[0]:split[1]], local_input[:split[0]], local_input[split[1]:]
+    # label_train, label_dev, label_test = label[split[0]:split[1]], label[:split[0]], label[split[1]:]
 
-
+    # n = 16
+    # indices = np.arange(n)
+    # np.random.shuffle(indices)
+    # id_train, id_dev, id_test = get_set(id_data, indices, n)
+    # uid_train, uid_dev, uid_test = get_set(uid, indices, n)
+    # X_train, X_dev, X_test = get_set(data, indices, n)
+    # prob_train, prob_dev, prob_test = get_set(prob, indices, n)
+    # global_train, global_dev, global_test = get_set(global_input, indices, n)
+    # local_train, local_dev, local_test = get_set(local_input, indices, n)
+    # label_train, label_dev, label_test = get_set(label, indices, n)
+    
     d_train = TreeDataset(id_train, uid_train, X_train, prob_train, global_train, local_train, label_train)
     d_val = TreeDataset(id_dev, uid_dev, X_dev, prob_dev, global_dev, local_dev, label_dev)  
     d_test  = TreeDataset(id_test, uid_test, X_test, prob_test, global_test, local_test, label_test)   
@@ -149,90 +187,10 @@ def train(model, opt, strat_model, strat_opt, dl_train, dl_val, logging, max_epo
     best_loss = np.inf
     best_model = deepcopy(model.state_dict())
 
-    # for loop in range(args.max_loop):
-    #     print('THIS IS LOOP', loop)
-    #     best_in_this_loop = False
-    #     impatient = 0
-    #     if loop == 1:
-    #         best_loss = np.inf
-    #     if loop == 0:
-    #         best_in_this_loop = True
-    #     for epoch in range(max_epochs):
-    #         # Train epoch
-    #         model.train()
-    #         for input in dl_train:
-    #             #input = input.in_time.to(device), input.out_time.to(device),input.length.to(device), input.index.to(device),input.in_mark.to(device), input.out_mark.to(device)#move_input_batch_to_device(input, device)
-    #             opt.zero_grad()
-    #             loss = model(input.in_time.to(device), input.out_time.to(device),input.length.to(device),
-    #                          input.index.to(device), input.in_mark.to(device), input.out_mark.to(device), 
-    #                          input.in_tweet_type.to(device), input.out_tweet_type.to(device), 
-    #                          use_marks, device)
-    #             '''if use_marks:
-    #                 log_prob, mark_nll, accuracy = model.log_prob(input)
-    #                 loss = -model.module.aggregate(log_prob, input.length, device) + model.module.aggregate(
-    #                     mark_nll, input.length, device)
-    #                 del log_prob, mark_nll, accuracy
-    #             else:
-    #                 loss = -model.module.aggregate(model.module.log_prob(input), input.length, device)'''
-    #             loss = (loss*sum_vec).sum()
-    #             if loop != 0:
-    #                 marks_set = set()
-    #                 for batch in input.in_mark.tolist():
-    #                     marks_set |= set(batch)
-    #                 marks = torch.tensor(list(marks_set)).to(args.device)
-    #                 marks_emb = model.rnn.mark_embedding(marks)
-    #                 #print(marks_emb.size())
-    #                 #print('loss_pre',loss)
-    #                 loss += -gmm.score_samples(marks_emb).mean()/args.mark_embedding_size
-    #                 #print('loss_post',loss)
-    #             loss.backward()
-    #             opt.step()
-    #         # End of Train epoch
-
-    #         model.eval()  # val losses over all val batches aggregated
-    #         loss_val, loss_val_time, loss_val_marks, loss_val_acc = get_total_loss(
-    #             dl_val, model, use_marks, device)
-    #         loss_gmm = 0.0
-    #         if loop != 0:
-    #             loss_gmm = -gmm.score_samples(model.rnn.mark_embedding.weight.detach()).mean()/args.mark_embedding_size
-    #             loss_val += loss_gmm
-    #         plot_val_losses.append([loss_val, loss_val_time, loss_val_marks, loss_val_acc, loss_gmm])
-
-    #         if (best_loss - loss_val) < 1e-4:
-    #             impatient += 1
-    #             if loss_val < best_loss:
-    #                 best_loss = loss_val
-    #                 best_model = deepcopy(model.state_dict())
-    #                 if not best_in_this_loop:
-    #                     best_in_this_loop = True
-    #                     best_gmm = deepcopy(gmm.state_dict())
-    #         else:
-    #             best_loss = loss_val
-    #             best_model = deepcopy(model.state_dict())
-    #             impatient = 0
-    #             if not best_in_this_loop:
-    #                 best_in_this_loop = True
-    #                 best_gmm = deepcopy(gmm.state_dict())
-
-    #         if impatient >= patience:
-    #             logging.info(f'Breaking due to early stopping at epoch {epoch}'); break
-
-    #         if (epoch + 1) % display_step == 0:
-    #             amdn_loss = loss_val-loss_gmm
-    #             logging.info(f"Epoch {epoch+1:4d}, trlast = {loss:.4f}, val = {loss_val:.4f}, amdn_loss = {amdn_loss:.4f}, gmmval = {loss_gmm:.4f}")
-            
-    #         if (epoch + 1) % save_freq == 0:
-    #             if loop == 0:
-    #                 torch.save(best_model, os.path.join(out_dir, 'best_pre_train_model_state_dict_ep_{}.pt'.format(epoch)))
-    #                 # evaluate(model, [dl_train, dl_val], ['Ckpt_train', 'Ckpt_val'], use_marks, device)
-    #                 logging.info(f"saved intermediate pre-trained checkpoint")
-    #             else:
-    #                 torch.save(best_model, os.path.join(out_dir, 'best_model_state_dict_iter_{}_ep_{}.pt'.format(loop, epoch)))
-    #                 # evaluate(model, [dl_train, dl_val], ['Ckpt_train', 'Ckpt_val'], use_marks, device)
-    #                 logging.info(f"saved intermediate checkpoint")
-        
+    
     criterion = nn.CrossEntropyLoss()
     min_loss = float('inf')
+    max_acc = 0
     best_model_path = os.path.join(f'{args.journalist}/best_model_w_strat.pth') 
     best_strat_model_path = os.path.join(f'{args.journalist}/best_strat_model_w_strat.pth') 
     use_strat = args.use_strat
@@ -307,8 +265,10 @@ def train(model, opt, strat_model, strat_opt, dl_train, dl_val, logging, max_epo
                 #total_loss.backward()
                 #optimizer.step()
             
-        if loss.item() < min_loss:
+        #if loss.item() < min_loss:
+        if acc_tr > max_acc:
             min_loss = loss.item()
+            max_acc = acc_tr
             print(f"Epoch [{epoch+1}/10], New Min Loss: {min_loss}, New Strategy Loss: {total_loss}")
             print(f"Acc: {acc_tr}, F1: {f1_tr}, Recall: {recall_tr}")
             # Save the model state
@@ -386,10 +346,13 @@ def evaluate(model, strat_model, dl_test, device):
             true_labels.extend(targets[mask_bool].view(-1).tolist())
 
         correct_predictions = sum(p == t for p, t in zip(predictions, true_labels))
-        accuracy = correct_predictions / len(true_labels)
-        f1_te = sklearn.metrics.f1_score(true_labels, predictions, average='weighted')
-        recall_te = sklearn.metrics.recall_score(true_labels, predictions, average='weighted')
-        y_true_binarized = label_binarize(true_labels, classes=range(args.num_classes))
+        if len(true_labels) != 0:
+            accuracy = correct_predictions / len(true_labels)
+            f1_te = sklearn.metrics.f1_score(true_labels, predictions, average='weighted')
+            recall_te = sklearn.metrics.recall_score(true_labels, predictions, average='weighted')
+            y_true_binarized = label_binarize(true_labels, classes=range(args.num_classes))
+        else:
+            f1_te, recall_te, accuracy = 0, 0, 0
         #print(y_true_binarized.size(), output[mask_bool].view(-1, 3).size())
         #print(y_true_binarized, output[mask_bool].view(-1, 3))
         #auc_te = roc_auc_score(y_true_binarized, output[mask_bool].view(-1, 3).cpu().detach().numpy(), multi_class='ovr')
@@ -456,7 +419,7 @@ if __name__=='__main__':
     parser.add_argument('--data_dir', type=str, default='../data')
     parser.add_argument('--out_dir', type=str, default='../data')
     parser.add_argument('--log_filename', type=str, default='run.log')
-    parser.add_argument('--journalist', type=str, default='Lingling_Wei')
+    parser.add_argument('--journalist', type=str, default='aliceysu')
     parser.add_argument('--classes', type=int, default=3)
     parser.add_argument('--best_model_path', type=str, default='best_model.pth')
     parser.add_argument('--best_strat_model_path', type=str, default='best_strat_model.pth')
@@ -481,9 +444,9 @@ if __name__=='__main__':
     ## training arguments
     parser.add_argument('--seed', type=int, default=42)
     parser.add_argument('--device', type=str, default='cuda')
-    parser.add_argument('--regularization', type=float, default=1e-2)
+    parser.add_argument('--regularization', type=float, default=1e-3)
     parser.add_argument('--learning_rate', type=float, default=0.0001)
-    parser.add_argument('--max_epochs', type=int, default=1000)  # 1000 
+    parser.add_argument('--max_epochs', type=int, default=200)  # 1000 
     parser.add_argument('--max_loop', type=int, default=1)
     parser.add_argument('--patience', type=int, default=2)
     parser.add_argument('--save_freq', type=int, default=1)
@@ -529,7 +492,8 @@ if __name__=='__main__':
     model.load_state_dict(torch.load(os.path.join(args.out_dir, best_model_path)))
     strat_model.load_state_dict(torch.load(os.path.join(args.out_dir, best_strat_model_path)))
     pred_val, strat_val, output_val, true_labels, predictions = evaluate(model, strat_model, dl_val, args.device)
-    pred_te, strat_te, predictions_te = test(model, strat_model, dl_test, args.device)
+    #pred_te, strat_te, predictions_te = test(model, strat_model, dl_test, args.device)
+    pred_te, strat_te, output_te, true_labels_te, predict_te = evaluate(model, strat_model, dl_test, args.device)
     with open(os.path.join(args.out_dir, f'{args.journalist}/pred_val.pkl'), 'wb') as file:
         pickle.dump(pred_val, file)
 
@@ -545,8 +509,8 @@ if __name__=='__main__':
     with open(os.path.join(args.out_dir, f'{args.journalist}/predictions.pkl'), 'wb') as file:
         pickle.dump(predictions, file)
     
-    with open(os.path.join(args.out_dir, f'{args.journalist}/predictions_te.pkl'), 'wb') as file:
-        pickle.dump(predictions_te, file)
+    with open(os.path.join(args.out_dir, f'{args.journalist}/output_te.pkl'), 'wb') as file:
+        pickle.dump(output_te, file)
 
     with open(os.path.join(args.out_dir, f'{args.journalist}/strat_te.pkl'), 'wb') as file:
         pickle.dump(strat_te, file)

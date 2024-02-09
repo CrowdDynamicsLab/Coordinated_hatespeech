@@ -4,13 +4,14 @@ from tqdm import tqdm
 import os
 import json
 from datetime import datetime
+import math
 
 import torch
 from torch.utils.data import DataLoader, Dataset, random_split
 from torch.optim import Adam
 from transformers import BertTokenizer, BertForSequenceClassification, AdamW, BertModel
 
-journalist = 'sallykohn'
+journalist = 'nighatdad'
 data_dir = '../data'
 
 def map_ids(u):
@@ -259,17 +260,25 @@ if __name__=='__main__':
     df = pd.read_csv(os.path.join(data_dir, f'{journalist}/{journalist}_context.csv'))
     lab = list(df['labels'])
     
-    count = 0
-    for i in range(len(lab)):
-        #if lab[i] == '-1' or lab[i] == '0' or lab[i] == '1' or lab[i] == -1 or lab[i] == 1 or lab[i] ==0:
-        if lab[i] == 0 or lab[i] == 1 or lab[i] ==2:
-            count += 1
-        else: break
+    count = 149
+    # for i in range(len(lab)):
+    #     if i >= 1000:
+    #         break
+    #     #if lab[i] == '-1' or lab[i] == '0' or lab[i] == '1' or lab[i] == -1 or lab[i] == 1 or lab[i] ==0:
+    #     if lab[i] == 0 or lab[i] == 1 or lab[i] ==2 or lab[i] == '0' or lab[i] == '1' or lab[i] == '2':
+    #         count += 1
+    #     elif type(lab[i]) != str and math.isnan(lab[i]):
+    #         lab[i] = '1'
+    #         count += 1
+    #     elif type(lab[i]) == str:
+    #         lab[i] = '1'
+    #         count += 1
+    #     else: break
 
     label_real = lab[:count]
     if type(label_real[0]) == str:
-        print("yes")
-        labels = {'-1': 0, '0': 1, '1': 2, np.nan: 9000}
+        print("yes", count)
+        labels = {'0': 0, '1': 1, '2': 2, np.nan: 9000}
     else:
         labels = {0.0: 0, 1.0: 1, 2.0: 2, np.nan: 9000}
     label = [labels[l] for l in label_real]
@@ -284,30 +293,53 @@ if __name__=='__main__':
     user_conv, num_label = generate_csv(users[0], label)
     user_conv_old = pd.DataFrame(user_conv, columns = column)
 
-    user_text = user_conv_old[column_text]
-    user_conv_info = user_conv_old[column_label]
+    # user_text = user_conv_old[column_text]
+    # user_conv_info = user_conv_old[column_label]
+
+    user_text = user_conv_old
+    user_conv_info = user_conv_old
 
     # Split the data into labeled and unlabeled
     labeled_text = user_text.dropna(subset=['labels']).reset_index(drop=True)  # Assuming rows with missing labels are NaN
-    unlabeled_text = user_text[user_text['labels'].isna()].reset_index(drop=True)
+    unlabeled_text = user_text[user_text['labels'].isna()].reset_index(drop=True).loc[:2000]
 
     
     #labeled_df = labeled_text.reset_index(drop=True)
     #unlabeled_df = unlabeled_df.reset_index(drop=True)
     labeled, unlabeled = BertModel(labeled_text, unlabeled_text)
-
+    print("DONE")
     labeled.labels = [label for label in labeled['labels']]
     unlabeled.labels = [label[0] for label in unlabeled['predicted_label']]
 
+    date_format = "%Y-%m-%dT%H:%M:%S.%fZ" 
+    for i in range(len(labeled['created_at'])):
+        labeled['created_at'][i] = datetime.strptime(labeled['created_at'][i], date_format)
+
+    for i in range(len(unlabeled['created_at'])):
+        unlabeled['created_at'][i] = datetime.strptime(unlabeled['created_at'][i], date_format)
+
+    # labeled_sort = labeled.sort_values(by=['created_at'], ascending=True)
+    # unlabeled_sort = unlabeled.sort_values(by=['created_at'], ascending=True)
+
+    # labeled_text =pd.concat([labeled_sort, unlabeled_sort])
+    # out_path = os.path.join(data_dir, f'{journalist}/{journalist}_conv_labels.csv')
+    # labeled_text.to_csv(out_path, index=False)
+
     labeled_text =pd.concat([labeled, unlabeled])
     labeled_list = list(labeled_text.labels)
-    user_conv_info['labels'] = labeled_list
+    truncate_df = user_conv_info.loc[:len(labeled_list)-1]
+    truncate_df['labels'] = labeled_list
+    #user_conv_info.loc[:len(labeled_list)-1]['labels'] = labeled_list
+    print(len(labeled_list), len(truncate_df))
+    
+    for i in range(len(truncate_df['created_at'])):
+        truncate_df['created_at'][i] = datetime.strptime(truncate_df['created_at'][i], date_format)
+    user_conv_sort = truncate_df.sort_values(by=['created_at'], ascending=True)
+    print(user_conv_sort.labels)
 
-
-    date_format = "%Y-%m-%dT%H:%M:%S.%fZ" 
-    for i in range(len(user_conv_info['created_at'])):
-        user_conv_info['created_at'][i] = datetime.strptime(user_conv_info['created_at'][i], date_format)
-    user_conv_sort = user_conv_info.sort_values(by=['created_at'], ascending=True)
+    # for i in range(len(user_conv_info.loc[:2000]['created_at'])):
+    #     user_conv_info['created_at'][i] = datetime.strptime(user_conv_info['created_at'][i], date_format)
+    # user_conv_sort = user_conv_info.loc[:2000].sort_values(by=['created_at'], ascending=True)
 
     out_path = os.path.join(data_dir, f'{journalist}/{journalist}_conv_labels.csv')
     user_conv_sort.to_csv(out_path, index=False)

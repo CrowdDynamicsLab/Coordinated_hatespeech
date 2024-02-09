@@ -32,7 +32,7 @@ class MultiHeadAttention(nn.Module):
     def forward(self, values, keys, query, pos, rel, mask, mode):
         N = query.shape[0]
         value_len, key_len, query_len = values.shape[1], keys.shape[1], query.shape[1]
-        #print(N, query_len, self.heads, self.head_dim, rel.size())
+        #print("ATTENTION!!!", keys.size(), pos.size(), rel.size())
         # Split into multiple heads
         values = values.reshape(N, value_len, self.heads, self.head_dim)
         keys = keys.reshape(N, key_len, self.heads, self.head_dim)
@@ -165,6 +165,7 @@ class CustomTransformerModel(nn.Module):
         #out = self.positional_encoding(out)
         pos_emb = self.global_to_embedding(pos)
         rel_emb = self.local_to_embedding(rel)
+        #print("!!!!!", rel.size(), pos.size())
         for layer in self.layers:
             out = layer(out, out, out, pos_emb, rel_emb, mask, self.mode)
         # probability

@@ -53,6 +53,7 @@ class Batch():
 def collate(batch):
     batch_li = [list(item) for item in batch]
     data_temp = [row[0] for row in batch_li]
+    #print("?????", [row[1] for row in batch_li], type(batch_li[0][1]))
     labels_temp = [torch.Tensor(row[1]) for row in batch_li]
     prob_temp = [torch.Tensor(row[2]) for row in batch_li]
     global_path_temp = [row[3] for row in batch_li]

@@ -205,7 +205,7 @@ def cal_cite_edgeprobs(df):
 
 if __name__=='__main__':
     out_dir = '../data'
-    journalist = 'Lingling_Wei'
+    journalist = 'nighatdad'
     conv = pd.read_csv(os.path.join(out_dir, f'{journalist}/{journalist}_conv_labels.csv'))
     
     journal = conv
